@@ -1,0 +1,19 @@
+[Unit]
+Description=VetDojo Celery knowledge-processing worker
+After=network-online.target redis-server.service
+Requires=redis-server.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=www-data
+WorkingDirectory=/srv/vetdojo/web_app
+EnvironmentFile=/srv/vetdojo/web_app/.env
+ExecStart=/srv/vetdojo/web_app/.venv/bin/celery -A config worker --loglevel=INFO --concurrency=2
+Restart=on-failure
+RestartSec=10
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

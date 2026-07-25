@@ -1,0 +1,4 @@
+{% extends "management/base.html" %}{% block title %}Delete source{% endblock %}{% block content %}
+<div class="page-heading"><div><p class="eyebrow">Permanent deletion</p><h1>Delete {{ source.source_title|default:"this source" }}?</h1><p>This permanently removes the source, its consultation details, processing history and generated chunks. This cannot be undone.</p></div></div>
+<form method="post" class="source-form narrow-form">{% csrf_token %}<section class="panel danger-panel"><label for="confirmation">Type <strong>{{ source.source_id }}</strong> to confirm</label><input id="confirmation" name="confirmation" autocomplete="off" required></section><div class="form-actions"><a href="{% url 'management:source_list' %}">Cancel</a><button class="button danger-button" type="submit">Permanently delete</button></div></form>
+{% endblock %}

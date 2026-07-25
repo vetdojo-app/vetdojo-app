@@ -1,0 +1,42 @@
+{% extends "management/base.html" %}{% block title %}Knowledge sources{% endblock %}{% block content %}
+<div class="page-heading"><div><p class="eyebrow">Library</p><h1>Knowledge sources</h1>{% if page_obj %}<p>{{ page_obj.paginator.count }} source{{ page_obj.paginator.count|pluralize }}</p>{% endif %}</div><div class="actions"><a class="button secondary" href="{% url 'management:consultation_create' %}">Add consultation</a><a class="button" href="{% url 'management:transcript_create' %}">Add transcript</a></div></div>
+<form class="filters" method="get">
+  <input name="q" value="{{ search_query }}" placeholder="Search title or source ID">
+  <select name="type">
+    <option value="">All types</option>
+    <option value="youtube_transcript" {% if selected_type == "youtube_transcript" %}selected{% endif %}>Transcripts</option>
+    <option value="youtube_video" {% if selected_type == "youtube_video" %}selected{% endif %}>Legacy videos</option>
+    <option value="consultation" {% if selected_type == "consultation" %}selected{% endif %}>Consultations</option>
+  </select>
+  <select name="status">
+    <option value="">All statuses</option>
+    {% for value,label in statuses %}<option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+  </select>
+  <button class="button">Filter</button>
+</form>
+<section class="panel table-wrap">
+  <table><thead><tr><th>Source</th><th>Type</th><th>Category</th><th>Status</th><th>Searchable</th><th>Actions</th></tr></thead>
+  <tbody>{% for source in sources %}<tr>
+    <td><strong>{{ source.source_title|default:"Untitled" }}</strong><small>{{ source.source_id }}</small></td>
+    <td>{{ source.source_type }}</td>
+    <td>{{ source.profile_record.category|default:"—" }}</td>
+    <td>{% if source.profile_record %}<span class="status {{ source.profile_record.status }}">{{ source.profile_record.get_status_display }}</span>{% else %}<span class="status completed">Legacy active</span>{% endif %}</td>
+    <td>{% if source.profile_record %}{{ source.profile_record.is_active|yesno:"Active,Inactive" }}{% else %}Active{% endif %}</td>
+    <td class="row-actions"><a href="{% url 'management:source_edit' source.pk %}">Edit</a><a href="{% url 'management:source_chunks' source.pk %}">Chunks</a>{% if source.profile_record %}<form method="post" action="{% url 'management:process' source.pk %}">{% csrf_token %}<button>{% if source.profile_record.has_processing_runs %}Reprocess{% else %}Process{% endif %}</button></form><form method="post" action="{% url 'management:toggle' source.pk %}">{% csrf_token %}<button>{{ source.profile_record.is_active|yesno:"Deactivate,Activate" }}</button></form>{% endif %}<a class="danger-link" href="{% url 'management:source_delete' source.pk %}">Delete</a></td>
+  </tr>{% empty %}<tr><td colspan="6" class="empty">No sources found.</td></tr>{% endfor %}</tbody></table>
+</section>
+{% if page_obj and page_obj.paginator.num_pages > 1 %}
+<nav class="pagination" aria-label="Source pages">
+  <div class="pagination-summary">Page <strong>{{ page_obj.number }}</strong> of {{ page_obj.paginator.num_pages }}</div>
+  <div class="pagination-pages">
+    {% if page_obj.has_previous %}<a class="page-control" aria-label="Previous page" href="?page={{ page_obj.previous_page_number }}&q={{ search_query|urlencode }}&type={{ selected_type|urlencode }}&status={{ selected_status|urlencode }}">&larr;<span>Previous</span></a>{% else %}<span class="page-control disabled">&larr;<span>Previous</span></span>{% endif %}
+    {% for number in page_range %}
+      {% if number == page_obj.paginator.ELLIPSIS %}<span class="page-ellipsis">&hellip;</span>
+      {% elif number == page_obj.number %}<span class="page-number current" aria-current="page">{{ number }}</span>
+      {% else %}<a class="page-number" href="?page={{ number }}&q={{ search_query|urlencode }}&type={{ selected_type|urlencode }}&status={{ selected_status|urlencode }}">{{ number }}</a>{% endif %}
+    {% endfor %}
+    {% if page_obj.has_next %}<a class="page-control" aria-label="Next page" href="?page={{ page_obj.next_page_number }}&q={{ search_query|urlencode }}&type={{ selected_type|urlencode }}&status={{ selected_status|urlencode }}"><span>Next</span>&rarr;</a>{% else %}<span class="page-control disabled"><span>Next</span>&rarr;</span>{% endif %}
+  </div>
+</nav>
+{% endif %}
+{% endblock %}

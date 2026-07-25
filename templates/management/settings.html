@@ -1,0 +1,3 @@
+{% extends "management/base.html" %}{% block title %}Settings{% endblock %}{% block content %}
+<div class="page-heading"><div><p class="eyebrow">Configuration</p><h1>Knowledge-base settings</h1><p>API keys and database credentials remain environment-only and are never displayed here.</p></div></div>
+<form method="post" class="source-form">{% csrf_token %}<section class="panel">{{ form.as_div }}</section><div class="message warning">Changing the embedding model, dimensions, chunk size or overlap marks completed sources as needing reprocessing.</div><div class="form-actions"><button class="button">Save settings</button></div></form>{% endblock %}

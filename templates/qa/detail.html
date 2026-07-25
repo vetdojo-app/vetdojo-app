@@ -1,0 +1,19 @@
+{% extends "base.html" %}{% load qa_extras %}{% block title %}Answer | VetDojo{% endblock %}{% block content %}
+<section class="app-shell">
+<a class="back-link" href="{% url 'qa:dashboard' %}">&larr; Ask another question</a>
+<div class="question-display"><span>Your question</span><h1>{{ question.text }}</h1></div>
+{% for answer in question.answers.all %}
+<article class="answer-card {% if answer.is_client_content %}answer-library{% else %}answer-ai{% endif %}">
+<header class="answer-header"><div>
+{% if answer.is_client_content %}<span class="source-badge library">&bull; VetDojo knowledge base</span><h2>Answer from the knowledge base</h2>
+{% elif answer.source_type == 'general_ai_requested' %}<span class="source-badge ai">&#10022; Requested AI alternative</span><h2>General AI alternative</h2>
+{% elif answer.source_type == 'insufficient' %}<span class="source-badge ai">Knowledge unavailable</span><h2>Insufficient active evidence</h2>
+{% else %}<span class="source-badge ai">&#10022; General AI knowledge</span><h2>AI-generated answer</h2>{% endif %}
+</div><span class="generated-time">Generated {{ answer.created_at|timesince }} ago</span></header>
+{% if not answer.is_client_content %}<div class="origin-notice"><strong>Source notice</strong>{% if answer.source_type == "general_ai_automatic" %}<p>No sufficiently relevant answer was found in the active VetDojo knowledge base, so this response was generated using general AI knowledge.</p>{% elif answer.source_type == "insufficient" %}<p>The active VetDojo knowledge base did not contain sufficient evidence and general AI fallback is disabled.</p>{% else %}<p>You requested a separate response using general AI knowledge. This answer is not derived from the VetDojo knowledge base.</p>{% endif %}</div>{% endif %}
+<div class="answer-body"><p class="answer-summary">{{ answer.structured_content.summary|default:answer.text|clean_ai_text }}</p>{% for section in answer.structured_content.sections %}<section><h3>{{ section.heading|clean_ai_text }}</h3><div>{{ section.content|clean_ai_text|linebreaks }}</div></section>{% endfor %}{% if answer.display_limitations %}<section class="limitations"><h3>Limitations</h3><ul>{% for item in answer.display_limitations %}<li>{{ item|clean_ai_text }}</li>{% endfor %}</ul></section>{% endif %}</div>
+{% if answer.sources.all %}<div class="sources-panel"><div class="section-row"><h3>Referenced knowledge</h3><span>{{ answer.sources.all|length }} source{{ answer.sources.all|length|pluralize }}</span></div><div class="source-grid">{% for source in answer.sources.all %}{% if source.source_url %}<a href="{{ source.source_url }}" target="_blank" rel="noopener" class="video-source">{% else %}<div class="video-source">{% endif %}<span class="video-number">{{ source.citation_order|stringformat:"02d" }}</span><div><strong>{{ source.source_title }}</strong><p>{{ source.excerpt|truncatechars:180 }}</p><small>{% if source.source_type == "consultation" %}De-identified clinical case{% else %}Watch on YouTube &nearr;{% endif %}</small></div>{% if source.source_url %}</a>{% else %}</div>{% endif %}{% endfor %}</div></div>{% endif %}
+</article>
+{% empty %}<div class="answer-card"><p>The answer is still processing.</p></div>{% endfor %}
+</section>
+{% endblock %}

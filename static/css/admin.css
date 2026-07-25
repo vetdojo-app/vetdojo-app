@@ -1,0 +1,24 @@
+:root {
+  --primary: #174f4a;
+  --secondary: #236f66;
+  --accent: #f0b44d;
+  --header-color: #fff;
+  --header-branding-color: #fff;
+  --link-fg: #17655d;
+  --link-hover-color: #0d443f;
+  --hairline-color: #dce6e3;
+}
+
+#header { background: #123f3b; padding: 12px 32px; }
+.vetdojo-admin-brand { display: flex; align-items: center; gap: 14px; color: white; font-size: 18px; font-weight: 650; }
+.vetdojo-admin-brand img { width: 150px; height: 42px; object-fit: contain; background: white; border-radius: 5px; }
+.admin-welcome { margin-bottom: 24px; padding: 26px 30px; color: white; border-radius: 12px; background: linear-gradient(130deg, #123f3b, #237066); box-shadow: 0 10px 25px rgba(18, 63, 59, .14); }
+.admin-welcome h1 { margin: 2px 0 8px; color: white; font-size: 26px; }
+.admin-welcome p { margin: 0; max-width: 700px; line-height: 1.55; }
+.admin-welcome .eyebrow { color: #f6cf8b; font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.module, #content-related .module { border-radius: 9px; overflow: hidden; border: 1px solid #dce6e3; }
+.module h2, .module caption, .inline-group h2 { background: #e8f2f0; color: #173e3a; }
+div.breadcrumbs { background: #1f665f; }
+.button, input[type=submit], input[type=button], .submit-row input, a.button { background: #17655d; border-radius: 5px; }
+.button.default, input[type=submit].default, .submit-row input.default { background: #d28a20; }
+@media (max-width: 767px) { #header { padding: 10px 16px; } .vetdojo-admin-brand img { width: 115px; } .vetdojo-admin-brand span { display: none; } .admin-welcome { padding: 20px; } }

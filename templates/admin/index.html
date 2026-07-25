@@ -1,0 +1,34 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block content %}
+<div id="content-main">
+  <section class="admin-welcome">
+    <p class="eyebrow">VetDojo operations</p>
+    <h1>Content and response oversight</h1>
+    <p>Review user questions, generated answers, supporting citations, feedback, and AI cache activity.</p>
+  </section>
+  {% include "admin/app_list.html" with app_list=app_list show_changelinks=True %}
+</div>
+{% endblock %}
+
+{% block sidebar %}
+<div id="content-related">
+  <div class="module" id="recent-actions-module">
+    <h2>{% translate 'Recent actions' %}</h2>
+    <h3>{% translate 'My actions' %}</h3>
+    {% load log %}
+    {% get_admin_log 10 as admin_log for_user user %}
+    {% if not admin_log %}<p>{% translate 'None available' %}</p>{% else %}
+      <ul class="actionlist">
+      {% for entry in admin_log %}
+        <li class="{% if entry.is_addition %}addlink{% elif entry.is_change %}changelink{% elif entry.is_deletion %}deletelink{% endif %}">
+          {% if entry.is_deletion or not entry.get_admin_url %}{{ entry.object_repr }}{% else %}<a href="{{ entry.get_admin_url }}">{{ entry.object_repr }}</a>{% endif %}
+          <br><span class="mini quiet">{{ entry.content_type.name|capfirst }}</span>
+        </li>
+      {% endfor %}
+      </ul>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

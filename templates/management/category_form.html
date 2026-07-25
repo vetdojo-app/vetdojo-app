@@ -1,0 +1,2 @@
+{% extends "management/base.html" %}{% block title %}Category{% endblock %}{% block content %}
+<div class="page-heading"><div><p class="eyebrow">Organization</p><h1>{% if category %}Edit category{% else %}Add category{% endif %}</h1></div></div><form method="post" class="source-form narrow-form">{% csrf_token %}<section class="panel">{{ form.as_div }}</section><div class="form-actions"><a href="{% url 'management:category_list' %}">Cancel</a><button class="button">Save category</button></div></form>{% endblock %}
