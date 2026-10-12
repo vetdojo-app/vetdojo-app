@@ -2,6 +2,7 @@ import tempfile
 from pathlib import Path
 
 from django.core.files.base import ContentFile
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.files.storage import FileSystemStorage
 from django.test import TestCase
 
@@ -51,3 +52,20 @@ class JournalPdfStorageTests(TestCase):
 
         self.assertFalse(previous_path.exists())
         self.assertTrue(replacement_path.exists())
+
+    def test_same_name_replacement_survives_when_previous_file_is_missing(self):
+        article = self.create_article()
+        stored_path = Path(article.pdf_file.path)
+        stored_path.unlink()
+        article.pdf_file = SimpleUploadedFile(
+            "article.pdf",
+            b"%PDF-new-copy",
+            content_type="application/pdf",
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            article.save()
+
+        article.refresh_from_db()
+        self.assertTrue(Path(article.pdf_file.path).exists())
+        self.assertEqual(Path(article.pdf_file.path).read_bytes(), b"%PDF-new-copy")

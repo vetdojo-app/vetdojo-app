@@ -10,6 +10,20 @@ def _delete_private_file(storage, name):
         storage.delete(name)
 
 
+def _delete_replaced_private_file(article_id, storage, previous_name):
+    # FileField finalizes upload_to and collision handling during model.save().
+    # A replacement can therefore resolve to the same path as a missing old
+    # file. Check the committed database value so that callback cannot delete
+    # the newly uploaded replacement.
+    current_name = (
+        JournalArticleDetails.objects.filter(pk=article_id)
+        .values_list("pdf_file", flat=True)
+        .first()
+    )
+    if current_name != previous_name:
+        _delete_private_file(storage, previous_name)
+
+
 @receiver(pre_save, sender=JournalArticleDetails)
 def delete_replaced_journal_pdf(sender, instance, **kwargs):
     if not instance.pk:
@@ -20,7 +34,11 @@ def delete_replaced_journal_pdf(sender, instance, **kwargs):
     if previous.pdf_file.name == instance.pdf_file.name:
         return
     transaction.on_commit(
-        lambda: _delete_private_file(previous.pdf_file.storage, previous.pdf_file.name)
+        lambda: _delete_replaced_private_file(
+            instance.pk,
+            previous.pdf_file.storage,
+            previous.pdf_file.name,
+        )
     )
 
 
