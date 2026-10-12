@@ -1,8 +1,12 @@
+from contextlib import nullcontext
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
+from django.utils import timezone
+from psycopg.types.json import Jsonb
 
-from .tasks import normalize_source_text, split_article_pages, split_chunks
+from .tasks import _replace_chunks, normalize_source_text, split_article_pages, split_chunks
 
 
 class KnowledgeProcessingHelpersTests(SimpleTestCase):
@@ -38,3 +42,27 @@ class KnowledgeProcessingHelpersTests(SimpleTestCase):
         self.assertEqual(chunks[0][3]["printed_page_start"], "602")
         self.assertEqual(chunks[1][3]["pdf_page_start"], 2)
         self.assertEqual(chunks[1][3]["doi"], "10.1000/example")
+
+    def test_raw_chunk_insert_adapts_metadata_as_jsonb(self):
+        source = SimpleNamespace(
+            pk=491,
+            source_type="journal_article",
+            source_id="journal:test",
+            source_title="Test article",
+            source_url="https://doi.org/10.1000/test",
+            updated_at=timezone.now(),
+        )
+        chunks = [(0, "Evidence", 1, {"pdf_page_start": 2, "journal": "Vet Journal"})]
+        cursor = MagicMock()
+        cursor_context = MagicMock()
+        cursor_context.__enter__.return_value = cursor
+
+        transaction_stub = SimpleNamespace(atomic=lambda: nullcontext())
+        connection_stub = SimpleNamespace(cursor=lambda: cursor_context)
+        with patch("apps.management.tasks.connection", connection_stub), patch(
+            "apps.management.tasks.transaction", transaction_stub
+        ):
+            _replace_chunks(source, chunks, [[0.1, 0.2]], "embedding-model", "content-hash")
+
+        insert_parameters = cursor.execute.call_args_list[1].args[1]
+        self.assertIsInstance(insert_parameters[-1], Jsonb)
