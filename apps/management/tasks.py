@@ -8,6 +8,7 @@ from django.conf import settings
 from django.db import connection, transaction
 from django.utils import timezone
 from openai import OpenAI
+from psycopg.types.json import Jsonb
 
 from apps.qa.models import (
     JournalArticleDetails,
@@ -151,7 +152,7 @@ def _replace_chunks(source, chunks, embeddings, model, content_hash):
                 """,
                 [
                     source.pk, source.source_type, source.source_id, source.source_title, source.source_url,
-                    index, text, token_count, embedding, model, content_hash, metadata,
+                    index, text, token_count, embedding, model, content_hash, Jsonb(metadata),
                 ],
             )
 
