@@ -8,6 +8,7 @@ from .models import (
     Answer,
     AnswerSource,
     Feedback,
+    JournalArticleDetails,
     KnowledgeBaseSettings,
     KnowledgeCategory,
     KnowledgeProcessingRun,
@@ -19,7 +20,7 @@ from .models import (
 class AnswerSourceInline(admin.TabularInline):
     model = AnswerSource
     extra = 0
-    fields = ("citation_order", "source_title", "chunk_index", "similarity", "source_link")
+    fields = ("citation_order", "source_title", "chunk_index", "similarity", "citation_metadata", "source_link")
     readonly_fields = fields
     can_delete = False
     show_change_link = True
@@ -124,7 +125,7 @@ class AnswerSourceAdmin(admin.ModelAdmin):
     list_display = ("source_title", "answer", "chunk_index", "similarity_score", "citation_order")
     list_filter = ("answer__source_type",)
     search_fields = ("source_title", "source_id", "excerpt", "answer__question__text")
-    readonly_fields = ("answer", "chunk_id", "source_document_id", "source_id", "source_title", "source_url", "chunk_index", "similarity", "excerpt", "citation_order")
+    readonly_fields = ("answer", "chunk_id", "source_document_id", "source_id", "source_title", "source_url", "chunk_index", "similarity", "excerpt", "citation_metadata", "citation_order")
     list_select_related = ("answer",)
 
     @admin.display(description="Similarity", ordering="similarity")
@@ -180,3 +181,4 @@ admin.site.register(KnowledgeCategory)
 admin.site.register(KnowledgeBaseSettings)
 admin.site.register(KnowledgeSourceProfile)
 admin.site.register(KnowledgeProcessingRun)
+admin.site.register(JournalArticleDetails)

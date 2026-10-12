@@ -1,5 +1,5 @@
 {% extends "management/base.html" %}{% block title %}Knowledge sources{% endblock %}{% block content %}
-<div class="page-heading"><div><p class="eyebrow">Library</p><h1>Knowledge sources</h1>{% if page_obj %}<p>{{ page_obj.paginator.count }} source{{ page_obj.paginator.count|pluralize }}</p>{% endif %}</div><div class="actions"><a class="button secondary" href="{% url 'management:consultation_create' %}">Add consultation</a><a class="button" href="{% url 'management:transcript_create' %}">Add transcript</a></div></div>
+<div class="page-heading"><div><p class="eyebrow">Library</p><h1>Knowledge sources</h1>{% if page_obj %}<p>{{ page_obj.paginator.count }} source{{ page_obj.paginator.count|pluralize }}</p>{% endif %}</div><div class="actions"><a class="button secondary" href="{% url 'management:article_create' %}">Add journal article</a><a class="button secondary" href="{% url 'management:consultation_create' %}">Add consultation</a><a class="button" href="{% url 'management:transcript_create' %}">Add transcript</a></div></div>
 <form class="filters" method="get">
   <input name="q" value="{{ search_query }}" placeholder="Search title or source ID">
   <select name="type">
@@ -7,6 +7,7 @@
     <option value="youtube_transcript" {% if selected_type == "youtube_transcript" %}selected{% endif %}>Transcripts</option>
     <option value="youtube_video" {% if selected_type == "youtube_video" %}selected{% endif %}>Legacy videos</option>
     <option value="consultation" {% if selected_type == "consultation" %}selected{% endif %}>Consultations</option>
+    <option value="journal_article" {% if selected_type == "journal_article" %}selected{% endif %}>Journal articles</option>
   </select>
   <select name="status">
     <option value="">All statuses</option>
@@ -17,12 +18,12 @@
 <section class="panel table-wrap">
   <table><thead><tr><th>Source</th><th>Type</th><th>Category</th><th>Status</th><th>Searchable</th><th>Actions</th></tr></thead>
   <tbody>{% for source in sources %}<tr>
-    <td><strong>{{ source.source_title|default:"Untitled" }}</strong><small>{{ source.source_id }}</small></td>
-    <td>{{ source.source_type }}</td>
+    <td><strong>{{ source.source_title|default:"Untitled" }}</strong><small>{{ source.source_id }}</small>{% if source.article_record and not source.article_record.metadata_reviewed %}<small class="review-warning">Metadata review pending</small>{% endif %}</td>
+    <td>{% if source.source_type == "journal_article" %}Journal article{% elif source.source_type == "consultation" %}Consultation{% elif source.source_type == "youtube_transcript" %}Transcript{% else %}{{ source.source_type }}{% endif %}{% if source.article_record %}<small>{{ source.article_record.journal }}{% if source.article_record.publication_year %} ({{ source.article_record.publication_year }}){% endif %} · {{ source.article_record.pdf_page_count|default:"?" }} PDF pages</small>{% endif %}</td>
     <td>{{ source.profile_record.category|default:"—" }}</td>
     <td>{% if source.profile_record %}<span class="status {{ source.profile_record.status }}">{{ source.profile_record.get_status_display }}</span>{% else %}<span class="status completed">Legacy active</span>{% endif %}</td>
     <td>{% if source.profile_record %}{{ source.profile_record.is_active|yesno:"Active,Inactive" }}{% else %}Active{% endif %}</td>
-    <td class="row-actions"><a href="{% url 'management:source_edit' source.pk %}">Edit</a><a href="{% url 'management:source_chunks' source.pk %}">Chunks</a>{% if source.profile_record %}<form method="post" action="{% url 'management:process' source.pk %}">{% csrf_token %}<button>{% if source.profile_record.has_processing_runs %}Reprocess{% else %}Process{% endif %}</button></form><form method="post" action="{% url 'management:toggle' source.pk %}">{% csrf_token %}<button>{{ source.profile_record.is_active|yesno:"Deactivate,Activate" }}</button></form>{% endif %}<a class="danger-link" href="{% url 'management:source_delete' source.pk %}">Delete</a></td>
+    <td class="row-actions">{% if source.source_type == "journal_article" %}<a href="{% url 'management:article_edit' source.pk %}">Edit</a>{% if source.article_record %}<a href="{% url 'management:article_download' source.pk %}">Download</a><form method="post" action="{% url 'management:article_extract' source.pk %}">{% csrf_token %}<button>{% if source.article_record.extracted_at %}Re-extract PDF{% else %}Extract PDF{% endif %}</button></form>{% if source.extraction_status == "success" %}<form method="post" action="{% url 'management:process' source.pk %}">{% csrf_token %}<button>{% if source.profile_record.has_processing_runs %}Reprocess chunks{% else %}Generate chunks{% endif %}</button></form>{% endif %}{% endif %}{% else %}<a href="{% url 'management:source_edit' source.pk %}">Edit</a>{% endif %}<a href="{% url 'management:source_chunks' source.pk %}">Chunks</a>{% if source.profile_record %}{% if source.source_type != "journal_article" %}<form method="post" action="{% url 'management:process' source.pk %}">{% csrf_token %}<button>{% if source.profile_record.has_processing_runs %}Reprocess{% else %}Process{% endif %}</button></form>{% endif %}<form method="post" action="{% url 'management:toggle' source.pk %}">{% csrf_token %}<button>{{ source.profile_record.is_active|yesno:"Deactivate,Activate" }}</button></form>{% endif %}<a class="danger-link" href="{% url 'management:source_delete' source.pk %}">Delete</a></td>
   </tr>{% empty %}<tr><td colspan="6" class="empty">No sources found.</td></tr>{% endfor %}</tbody></table>
 </section>
 {% if page_obj and page_obj.paginator.num_pages > 1 %}
