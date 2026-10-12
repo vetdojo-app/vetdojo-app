@@ -198,7 +198,13 @@ def process_knowledge_source(self, run_id):
         run.save(update_fields=("status", "chunk_count", "completed_at"))
         profile.status = KnowledgeSourceProfile.Status.COMPLETED
         profile.error_message = ""
-        profile.save(update_fields=("status", "error_message", "updated_at"))
+        update_fields = ["status", "error_message", "updated_at"]
+        if run.publish_on_success:
+            profile.is_active = True
+            profile.approved_by = run.initiated_by
+            profile.approved_at = timezone.now()
+            update_fields.extend(("is_active", "approved_by", "approved_at"))
+        profile.save(update_fields=update_fields)
         return {"source_id": source.pk, "chunks": len(chunks)}
     except Exception as exc:
         message = str(exc)[:4000]

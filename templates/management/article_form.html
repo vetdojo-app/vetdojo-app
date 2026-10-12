@@ -1,31 +1,50 @@
-{% extends "management/base.html" %}{% block title %}{% if article %}Edit{% else %}Add{% endif %} journal article{% endblock %}{% block content %}
-<div class="page-heading"><div><p class="eyebrow">Journal article</p><h1>{% if article %}Edit journal article{% else %}Add journal article{% endif %}</h1><p>Upload a reviewed text-based PDF and confirm its bibliographic information. Saving does not process or activate the article.</p></div></div>
+{% extends "management/base.html" %}{% load qa_extras %}
+{% block title %}{% if article %}Review{% else %}Add{% endif %} journal article{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">Journal article</p><h1>{% if article %}Review journal article{% else %}Add journal article{% endif %}</h1><p>Upload the PDF, let VetDojo analyze it, then review and publish it to the knowledge base.</p></div></div>
+
 {% if article %}
-<section class="panel">
-  <h2>PDF extraction</h2>
-  <p><strong>Status:</strong> {{ source.extraction_status|capfirst }}</p>
-  {% if article.extracted_at %}<p><strong>Last extracted:</strong> {{ article.extracted_at }} · {{ article.pages.count }} page{{ article.pages.count|pluralize }} with extracted text</p>{% endif %}
-  <p><strong>Metadata analysis:</strong> {{ article.get_metadata_analysis_status_display }}</p>
-  {% if article.extraction_warning %}<div class="review-warning">{{ article.extraction_warning|linebreaksbr }}</div>{% endif %}
-  {% if article.suggested_metadata %}
-    <h3>Suggested metadata</h3>
-    <p>Review these suggestions before manually updating the bibliographic fields below.</p>
-    <dl>{% for key, value in article.suggested_metadata.items %}{% if key != "quality_warnings" and value %}<dt>{{ key|title }}</dt><dd>{{ value }}</dd>{% endif %}{% endfor %}</dl>
-  {% endif %}
-  <form method="post" action="{% url 'management:article_extract' source.pk %}">{% csrf_token %}
-    <input type="hidden" name="use_openai" value="1">
-    <button class="button" type="submit" {% if source.extraction_status == "queued" or source.extraction_status == "processing" %}disabled{% endif %}>{% if article.extracted_at %}Re-extract PDF{% else %}Extract PDF{% endif %}</button>
-  </form>
-  {% if source.extraction_status == "success" %}
-  <form method="post" action="{% url 'management:process' source.pk %}">{% csrf_token %}
-    <button class="button secondary" type="submit">{% if profile_form.instance.processing_runs.exists %}Regenerate searchable chunks{% else %}Generate searchable chunks{% endif %}</button>
-  </form>
-  {% endif %}
+<section class="panel workflow-panel">
+  <div class="section-row"><div><h2>Publishing progress</h2><p class="hint">You may leave this page while background processing continues.</p></div>{% if profile_form.instance.is_active %}<span class="status completed">Active</span>{% elif processing_run.status == "failed" or source.extraction_status == "failed" %}<span class="status failed">Needs attention</span>{% elif processing_run.status == "pending" or processing_run.status == "processing" or source.extraction_status == "queued" or source.extraction_status == "processing" %}<span class="status processing">Working</span>{% else %}<span class="status pending">Draft</span>{% endif %}</div>
+  <ol class="workflow-steps">
+    <li class="done"><span>1</span><div><strong>PDF uploaded</strong><small>{{ article.original_filename }} · {{ article.pdf_page_count|default:"?" }} pages</small></div></li>
+    <li class="{% if source.extraction_status == 'success' %}done{% elif source.extraction_status == 'queued' or source.extraction_status == 'processing' %}current{% endif %}"><span>2</span><div><strong>{% if source.extraction_status == "success" %}Text extracted{% elif source.extraction_status == "failed" %}Analysis failed{% else %}Analyze PDF{% endif %}</strong><small>{% if source.extraction_status == "success" %}Page-aware text is ready{% elif source.extraction_status == "queued" or source.extraction_status == "processing" %}Analysis is running…{% else %}Save and analyze the PDF{% endif %}</small></div></li>
+    <li class="{% if article.metadata_reviewed %}done{% elif source.extraction_status == 'success' %}current{% endif %}"><span>3</span><div><strong>Review details</strong><small>{% if article.metadata_reviewed %}Details confirmed{% else %}Confirm citation information{% endif %}</small></div></li>
+    <li class="{% if profile_form.instance.is_active %}done{% elif processing_run.status == 'pending' or processing_run.status == 'processing' %}current{% endif %}"><span>4</span><div><strong>{% if profile_form.instance.is_active %}Published{% else %}Publish{% endif %}</strong><small>{% if profile_form.instance.is_active %}Available to answer questions{% elif processing_run.status == 'pending' or processing_run.status == 'processing' %}Creating searchable content…{% else %}Approve and add to search{% endif %}</small></div></li>
+  </ol>
 </section>
+
+{% if source.extraction_status == "queued" or source.extraction_status == "processing" or processing_run.status == "pending" or processing_run.status == "processing" %}<section class="panel activity-card" aria-live="polite"><span class="spinner" aria-hidden="true"></span><div><strong>{% if source.extraction_status == "queued" or source.extraction_status == "processing" %}Analyzing the PDF…{% else %}Publishing the article…{% endif %}</strong><p>This page refreshes automatically. It is safe to continue elsewhere in the management panel.</p></div></section>{% endif %}
+
+{% if source.extraction_status == "failed" or processing_run.status == "failed" %}<section class="panel error-panel"><h2>Processing needs attention</h2><p>{{ article.extraction_warning|default:profile_form.instance.error_message }}</p><p class="hint">Check the PDF and details, then use Save and analyze again. Technical details remain available in Processing history.</p></section>{% endif %}
+
+{% if source.extraction_status == "success" %}<section class="panel extraction-summary"><div class="section-row"><div><p class="eyebrow">Analysis complete</p><h2>PDF extracted successfully</h2><p>{{ article.pages.count }} page{{ article.pages.count|pluralize }} with extracted text{% if article.extracted_at %} · {{ article.extracted_at|date:"M j, Y, g:i a" }}{% endif %}</p></div><span class="success-mark">✓</span></div>{% if article.extraction_warning %}<div class="review-notes"><strong>Review notes</strong><p>{{ article.extraction_warning|linebreaksbr }}</p></div>{% endif %}</section>{% endif %}
+
+{% if article.suggested_metadata %}<section class="panel suggestions-panel"><div class="section-row"><div><h2>Suggested article details</h2><p class="hint">Suggestions never overwrite your entries automatically. Apply useful values, then review them below.</p></div><button class="button secondary" type="button" id="apply-all-suggestions">Apply all suggestions</button></div><div class="suggestion-grid">{% for key, value in article.suggested_metadata.items %}{% if key != "quality_warnings" and value %}<article class="suggestion-card"><span>{{ key|humanize_metadata_key }}</span><p{% if key == "abstract" %} class="suggestion-long collapsed"{% endif %}>{{ value }}</p>{% if key == "abstract" %}<button class="text-button toggle-abstract" type="button">Show full abstract</button>{% endif %}<button class="text-button apply-suggestion" type="button" data-field="{{ key }}">Use suggestion</button></article>{% endif %}{% endfor %}</div></section>{{ article.suggested_metadata|json_script:"article-suggestions" }}{% endif %}
 {% endif %}
-<form method="post" enctype="multipart/form-data" class="source-form">{% csrf_token %}
-  <section class="panel"><h2>Private PDF</h2>{% if article %}<div class="current-file"><strong>{{ article.original_filename }}</strong><small>{{ article.pdf_page_count|default:"Unknown" }} pages · stored privately</small><a href="{% url 'management:article_download' source.pk %}">Download current PDF</a></div>{% endif %}{{ article_form.pdf_file.errors }}{{ article_form.pdf_file.label_tag }}{{ article_form.pdf_file }}{% if article_form.pdf_file.help_text %}<span class="helptext">{{ article_form.pdf_file.help_text }}</span>{% endif %}</section>
-  <section class="panel"><h2>Bibliographic information</h2>{% for field in article_form %}{% if field.name != "pdf_file" %}<div>{{ field.errors }}{{ field.label_tag }}{{ field }}{% if field.help_text %}<span class="helptext">{{ field.help_text }}</span>{% endif %}</div>{% endif %}{% endfor %}</section>
-  <section class="panel"><h2>Lifecycle and review</h2><p class="privacy-note">New and replacement PDFs remain non-searchable until processing succeeds and an administrator activates the source.</p>{{ profile_form.as_div }}</section>
-  <div class="form-actions"><a href="{% url 'management:source_list' %}">Cancel</a><button class="button" type="submit">Save without processing</button></div>
-</form>{% endblock %}
+
+<form method="post" enctype="multipart/form-data" class="source-form" data-loading-form>{% csrf_token %}
+  <section class="panel"><div class="field-heading"><div><h2>Private PDF <span class="required-chip">Required</span></h2><p class="hint">The PDF is private and is never linked publicly.</p></div></div>{% if article %}<div class="current-file"><strong>{{ article.original_filename }}</strong><small>{{ article.pdf_page_count|default:"Unknown" }} pages · stored privately</small><a href="{% url 'management:article_download' source.pk %}">Download current PDF</a></div>{% endif %}<div class="form-field">{{ article_form.pdf_file.errors }}{{ article_form.pdf_file.label_tag }}{{ article_form.pdf_file }}{% if article_form.pdf_file.help_text %}<span class="helptext">{{ article_form.pdf_file.help_text }}</span>{% endif %}</div></section>
+
+  <section class="panel"><div class="field-heading"><div><h2>Article details</h2><p class="hint">Only the title and review confirmation are required to publish. The remaining details improve citations.</p></div></div><div class="form-field full">{{ article_form.article_title.errors }}{{ article_form.article_title.label_tag }}{{ article_form.article_title }}<span class="helptext">Optional during upload; required before publishing.</span></div><div class="form-grid"><div class="form-field">{{ article_form.authors.errors }}{{ article_form.authors.label_tag }}{{ article_form.authors }}</div><div class="form-field">{{ article_form.journal.errors }}{{ article_form.journal.label_tag }}{{ article_form.journal }}</div><div class="form-field">{{ article_form.publication_year.errors }}{{ article_form.publication_year.label_tag }}{{ article_form.publication_year }}</div><div class="form-field">{{ article_form.article_pages.errors }}{{ article_form.article_pages.label_tag }}{{ article_form.article_pages }}{% if article_form.article_pages.help_text %}<span class="helptext">{{ article_form.article_pages.help_text }}</span>{% endif %}</div></div>
+    <details class="optional-fields"{% if article_form.volume.value or article_form.issue.value or article_form.doi.value or article_form.publisher_url.value or article_form.abstract.value %} open{% endif %}><summary>Additional optional details</summary><div class="form-grid"><div class="form-field">{{ article_form.volume.errors }}{{ article_form.volume.label_tag }}{{ article_form.volume }}</div><div class="form-field">{{ article_form.issue.errors }}{{ article_form.issue.label_tag }}{{ article_form.issue }}</div><div class="form-field">{{ article_form.doi.errors }}{{ article_form.doi.label_tag }}{{ article_form.doi }}{% if article_form.doi.help_text %}<span class="helptext">{{ article_form.doi.help_text }}</span>{% endif %}</div><div class="form-field">{{ article_form.publisher_url.errors }}{{ article_form.publisher_url.label_tag }}{{ article_form.publisher_url }}{% if article_form.publisher_url.help_text %}<span class="helptext">{{ article_form.publisher_url.help_text }}</span>{% endif %}</div><div class="form-field full">{{ article_form.abstract.errors }}{{ article_form.abstract.label_tag }}{{ article_form.abstract }}</div></div></details>
+  </section>
+
+  <section class="panel"><h2>Organization <span class="optional-chip">Optional</span></h2>{{ profile_form.as_div }}</section>
+  {% if article and source.extraction_status == "success" %}<section class="panel review-confirmation"><h2>Ready to publish?</h2><div class="checkbox-row">{{ article_form.metadata_reviewed }}{{ article_form.metadata_reviewed.label_tag }}</div>{{ article_form.metadata_reviewed.errors }}<p class="helptext">Publishing creates searchable chunks and activates this article only after processing succeeds.</p></section>{% else %}<div class="hidden-field">{{ article_form.metadata_reviewed }}</div>{% endif %}
+  <div class="form-actions workflow-actions"><a href="{% url 'management:source_list' %}">Cancel</a><button class="button secondary" type="submit" name="action" value="save_draft" data-loading-text="Saving draft…">Save as draft</button><button class="button" type="submit" name="action" value="analyze" data-loading-text="Uploading and starting analysis…">Save and analyze PDF</button>{% if article and source.extraction_status == "success" %}<button class="button publish-button" type="submit" name="action" value="publish" data-loading-text="Starting publication…">Approve and publish article</button>{% endif %}</div>
+</form>
+{% if article %}<p class="destructive-action"><a class="danger-link" href="{% url 'management:source_delete' source.pk %}">Delete this article</a></p>{% endif %}
+
+<script>
+(() => {
+  const dataNode = document.getElementById('article-suggestions');
+  const suggestions = dataNode ? JSON.parse(dataNode.textContent) : {};
+  const setSuggestion = key => { const field = document.getElementById(`id_${key}`); if (field && suggestions[key] !== undefined && suggestions[key] !== null) field.value = suggestions[key]; };
+  document.querySelectorAll('.apply-suggestion').forEach(button => button.addEventListener('click', () => setSuggestion(button.dataset.field)));
+  document.getElementById('apply-all-suggestions')?.addEventListener('click', () => Object.keys(suggestions).forEach(key => key !== 'quality_warnings' && setSuggestion(key)));
+  document.querySelectorAll('.toggle-abstract').forEach(button => button.addEventListener('click', () => { const text = button.previousElementSibling; text.classList.toggle('collapsed'); button.textContent = text.classList.contains('collapsed') ? 'Show full abstract' : 'Show less'; }));
+  {% if source.extraction_status == "queued" or source.extraction_status == "processing" or processing_run.status == "pending" or processing_run.status == "processing" %}window.setTimeout(() => window.location.reload(), 5000);{% endif %}
+})();
+</script>
+{% endblock %}

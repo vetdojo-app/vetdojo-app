@@ -11,6 +11,7 @@ Django web application for authenticated, source-aware veterinary clinical Q&A. 
 - Configurable relevance threshold, context limits, and overlap deduplication
 - Structured library-based answers with citations to transcripts, consultations, and journal articles
 - Private journal PDF upload, validation, extraction, metadata review, page-aware chunking, and retrieval
+- Guided journal workflow: upload and analyze, review suggested metadata, then approve and publish
 - Automatic general-AI response when library evidence is insufficient
 - Optional separate AI alternative after a library-based answer
 - Versioned exact-question AI fallback cache (library search always runs first)

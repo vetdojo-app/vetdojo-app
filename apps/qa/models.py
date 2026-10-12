@@ -354,6 +354,7 @@ class KnowledgeProcessingRun(models.Model):
     chunk_overlap = models.PositiveIntegerField(default=120)
     estimated_tokens = models.PositiveIntegerField(default=0)
     error_details = models.TextField(blank=True)
+    publish_on_success = models.BooleanField(default=False)
     initiated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

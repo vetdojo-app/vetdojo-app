@@ -8,6 +8,18 @@ register = template.Library()
 
 
 @register.filter
+def humanize_metadata_key(value):
+    labels = {
+        "doi": "DOI",
+        "article_title": "Article title",
+        "article_pages": "Printed page range",
+        "publication_year": "Publication year",
+    }
+    key = str(value or "")
+    return labels.get(key, key.replace("_", " ").capitalize())
+
+
+@register.filter
 def clean_ai_text(value):
     """Remove Markdown emphasis markers from legacy structured answers."""
     text = str(value or "")
