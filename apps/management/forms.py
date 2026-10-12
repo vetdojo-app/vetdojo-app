@@ -130,7 +130,9 @@ class JournalArticleForm(forms.ModelForm):
                 "Text-based PDF only, up to 25 MB. The original file remains private and is not shared with public users."
             ),
             "article_pages": "Printed journal page range, for example 602-606.",
-            "metadata_reviewed": "Confirm that the title, authors, journal, year and DOI are accurate.",
+            "doi": "Optional. Usually printed on the first page, for example 10.1111/example.12345.",
+            "publisher_url": "Optional. Leave empty when a DOI is available; its link will be created automatically.",
+            "metadata_reviewed": "Required only when publishing. Confirm that you reviewed the article details and suggestions.",
         }
         widgets = {
             # The current private PDF is shown through the protected management
@@ -144,12 +146,24 @@ class JournalArticleForm(forms.ModelForm):
             "issue": forms.TextInput(attrs={"placeholder": "e.g. 6"}),
             "article_pages": forms.TextInput(attrs={"placeholder": "e.g. 602-606"}),
             "doi": forms.TextInput(attrs={"placeholder": "e.g. 10.1111/j.1532-950X.2014.12300.x"}),
-            "publisher_url": forms.URLInput(attrs={"placeholder": "https://doi.org/..."}),
+            "publisher_url": forms.URLInput(attrs={"placeholder": "Optional publisher or article URL"}),
             "abstract": forms.Textarea(attrs={"rows": 5, "placeholder": "Optional article abstract"}),
         }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields["article_title"].required = False
+        self.fields["article_title"].label = "Article title (optional during upload)"
+        self.fields["authors"].label = "Authors (recommended)"
+        self.fields["journal"].label = "Journal (recommended)"
+        self.fields["publication_year"].label = "Publication year (recommended)"
+        self.fields["volume"].label = "Volume (optional)"
+        self.fields["issue"].label = "Issue (optional)"
+        self.fields["article_pages"].label = "Printed page range (optional)"
+        self.fields["doi"].label = "DOI (optional)"
+        self.fields["publisher_url"].label = "Article link (optional)"
+        self.fields["abstract"].label = "Abstract (optional)"
+        self.fields["metadata_reviewed"].label = "I have reviewed these article details"
         if self.instance and self.instance.pk:
             self.fields["pdf_file"].required = False
             self.fields["pdf_file"].help_text = (

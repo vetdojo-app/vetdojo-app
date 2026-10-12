@@ -68,8 +68,9 @@ cd /srv/vetdojo/web_app
 .venv/bin/python manage.py createsuperuser
 ```
 
-Migrations `0011` through `0013` add private journal-article records, extracted
-pages, and citation metadata. Back up the database before applying them.
+Migrations `0011` through `0014` add private journal-article records, extracted
+pages, citation metadata, and publish-on-success processing. Back up the database
+before applying them.
 
 ## Backups
 

@@ -1,4 +1,5 @@
 import uuid
+from datetime import timedelta
 from pathlib import Path
 
 from django.conf import settings
@@ -252,6 +253,37 @@ def _safe_upload_name(value):
     return Path(str(value or "").replace("\\", "/")).name
 
 
+def _temporary_article_title(uploaded_file):
+    stem = Path(_safe_upload_name(getattr(uploaded_file, "name", ""))).stem
+    return stem.replace("_", " ").replace("-", " ").strip() or "Untitled journal article"
+
+
+def _create_processing_run(profile, source, user, *, publish_on_success=False):
+    config = KnowledgeBaseSettings.objects.first()
+    action = KnowledgeProcessingRun.Action.REPROCESS if profile.processing_runs.exists() else KnowledgeProcessingRun.Action.INITIAL
+    run = KnowledgeProcessingRun.objects.create(
+        profile=profile,
+        action=action,
+        embedding_model=config.embedding_model if config else settings.OPENAI_EMBEDDING_MODEL,
+        embedding_dimensions=config.embedding_dimensions if config else settings.OPENAI_EMBEDDING_DIMENSIONS,
+        chunk_size=config.chunk_size if config else settings.RAG_CHUNK_SIZE,
+        chunk_overlap=config.chunk_overlap if config else settings.RAG_CHUNK_OVERLAP,
+        estimated_tokens=max(1, len((source.content or "")) // 4),
+        initiated_by=user,
+        publish_on_success=publish_on_success,
+    )
+    profile.status = KnowledgeSourceProfile.Status.PENDING
+    profile.error_message = ""
+    profile.updated_by = user
+    if publish_on_success:
+        profile.is_active = False
+        profile.approved_by = None
+        profile.approved_at = None
+    profile.save()
+    process_knowledge_source.delay(run.pk)
+    return run
+
+
 @management_required
 def article_edit(request, pk=None):
     source = get_object_or_404(RagSourceDocument, pk=pk, source_type="journal_article") if pk else None
@@ -274,11 +306,42 @@ def article_edit(request, pk=None):
     article_form = JournalArticleForm(request.POST or None, request.FILES or None, instance=article)
     profile_form = ProfileForm(request.POST or None, instance=profile)
 
-    if request.method == "POST" and article_form.is_valid() and profile_form.is_valid():
+    action = request.POST.get("action", "save_draft")
+    forms_valid = article_form.is_valid() and profile_form.is_valid() if request.method == "POST" else False
+    if forms_valid and action == "publish":
+        if "pdf_file" in request.FILES:
+            article_form.add_error("pdf_file", "Analyze the replacement PDF before publishing it.")
+            forms_valid = False
+        if not (article_form.cleaned_data.get("article_title") or "").strip():
+            article_form.add_error("article_title", "Enter or apply the article title before publishing.")
+            forms_valid = False
+        if not article_form.cleaned_data.get("metadata_reviewed"):
+            article_form.add_error("metadata_reviewed", "Confirm that you reviewed the article details before publishing.")
+            forms_valid = False
+        if not source or source.extraction_status != "success" or not article or not article.pages.exists():
+            messages.error(request, "Analyze the PDF successfully before publishing it.")
+            forms_valid = False
+
+    if (
+        forms_valid
+        and action == "analyze"
+        and source
+        and source.extraction_status in {"queued", "processing"}
+        and source.updated_at
+        and source.updated_at >= timezone.now() - timedelta(minutes=30)
+    ):
+        messages.warning(request, "PDF analysis is already running. This page will update automatically.")
+        return redirect("management:article_edit", pk=source.pk)
+
+    if request.method == "POST" and forms_valid:
         replacement_uploaded = "pdf_file" in request.FILES
         with transaction.atomic():
             saved_article = article_form.save(commit=False)
             inspection = getattr(article_form, "pdf_inspection", None)
+            if not (saved_article.article_title or "").strip():
+                saved_article.article_title = _temporary_article_title(request.FILES.get("pdf_file"))
+            if saved_article.doi and not saved_article.publisher_url:
+                saved_article.publisher_url = f"https://doi.org/{saved_article.doi}"
 
             if source is None:
                 source = RagSourceDocument(
@@ -347,17 +410,42 @@ def article_edit(request, pk=None):
             if replacement_uploaded:
                 saved_article.pages.all().delete()
 
-        messages.success(
-            request,
-            "Journal article saved. Processing has not started." if pk is None else "Journal article updated.",
-        )
-        return redirect("management:source_list")
+        if action == "analyze":
+            source.extraction_status = "queued"
+            source.save(update_fields=("extraction_status", "updated_at"))
+            saved_article.metadata_reviewed = False
+            saved_article.metadata_analysis_status = (
+                JournalArticleDetails.MetadataAnalysisStatus.PENDING
+                if settings.OPENAI_PDF_ANALYSIS_ENABLED
+                else JournalArticleDetails.MetadataAnalysisStatus.NOT_REQUESTED
+            )
+            saved_article.extraction_warning = ""
+            saved_article.save(update_fields=(
+                "metadata_reviewed", "metadata_analysis_status", "extraction_warning", "updated_at",
+            ))
+            extract_journal_article.delay(saved_article.pk, use_openai=settings.OPENAI_PDF_ANALYSIS_ENABLED)
+            messages.success(request, "PDF uploaded. Analysis has started and this page will update automatically.")
+            return redirect("management:article_edit", pk=source.pk)
+
+        if action == "publish":
+            if saved_profile.processing_runs.filter(
+                status__in=(KnowledgeProcessingRun.Status.PENDING, KnowledgeProcessingRun.Status.PROCESSING)
+            ).exists():
+                messages.warning(request, "This article already has an active publishing job.")
+            else:
+                _create_processing_run(saved_profile, source, request.user, publish_on_success=True)
+                messages.success(request, "Article approved. Search indexing and publishing have started.")
+            return redirect("management:article_edit", pk=source.pk)
+
+        messages.success(request, "Journal article saved as a draft.")
+        return redirect("management:article_edit", pk=source.pk)
 
     return render(request, "management/article_form.html", {
         "article_form": article_form,
         "profile_form": profile_form,
         "source": source,
         "article": article,
+        "processing_run": profile.processing_runs.first() if profile else None,
     })
 
 
@@ -427,22 +515,7 @@ def queue_processing(request, pk):
     ).exists():
         messages.warning(request, "This source already has a pending or active processing job.")
         return redirect("management:source_list")
-    config = KnowledgeBaseSettings.objects.first()
-    action = KnowledgeProcessingRun.Action.REPROCESS if profile.processing_runs.exists() else KnowledgeProcessingRun.Action.INITIAL
-    run = KnowledgeProcessingRun.objects.create(
-        profile=profile, action=action,
-        embedding_model=config.embedding_model if config else settings.OPENAI_EMBEDDING_MODEL,
-        embedding_dimensions=config.embedding_dimensions if config else settings.OPENAI_EMBEDDING_DIMENSIONS,
-        chunk_size=config.chunk_size if config else settings.RAG_CHUNK_SIZE,
-        chunk_overlap=config.chunk_overlap if config else settings.RAG_CHUNK_OVERLAP,
-        estimated_tokens=max(1, len((source.content or "")) // 4),
-        initiated_by=request.user,
-    )
-    profile.status = KnowledgeSourceProfile.Status.PENDING
-    profile.error_message = ""
-    profile.updated_by = request.user
-    profile.save(update_fields=("status", "error_message", "updated_by", "updated_at"))
-    process_knowledge_source.delay(run.pk)
+    _create_processing_run(profile, source, request.user)
     messages.success(request, "Processing request queued. Progress is available in Processing history.")
     return redirect("management:source_list")
 
@@ -492,16 +565,12 @@ def source_delete(request, pk):
     source = get_object_or_404(RagSourceDocument, pk=pk)
     profile = KnowledgeSourceProfile.objects.filter(source_document_id=pk).first()
     if request.method == "POST":
-        confirmation = request.POST.get("confirmation", "").strip()
-        if confirmation != source.source_id:
-            messages.error(request, "The confirmation did not match the source ID.")
-        else:
-            with transaction.atomic():
-                if profile:
-                    profile.delete()
-                source.delete()
-            messages.success(request, "The source and its generated chunks were permanently deleted.")
-            return redirect("management:source_list")
+        with transaction.atomic():
+            if profile:
+                profile.delete()
+            source.delete()
+        messages.success(request, "The source and its generated chunks were permanently deleted.")
+        return redirect("management:source_list")
     return render(request, "management/source_confirm_delete.html", {"source": source})
 
 

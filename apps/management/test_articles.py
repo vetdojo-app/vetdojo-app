@@ -21,7 +21,7 @@ from apps.qa.pdf_validation import PdfInspection
 from apps.qa.storage import PrivateMediaStorage
 
 from .forms import JournalArticleForm
-from .tasks import extract_journal_article
+from .tasks import extract_journal_article, process_knowledge_source
 
 
 def text_pdf_bytes(text="Veterinary journal article evidence. " * 20):
@@ -195,7 +195,7 @@ class JournalArticleManagementTests(TransactionTestCase):
                     "pdf_file": self.pdf_upload(name="replacement.pdf", content=text_pdf_bytes("Replacement veterinary evidence. " * 20)),
                 },
             )
-        self.assertRedirects(response, reverse("management:source_list"))
+        self.assertRedirects(response, reverse("management:article_edit", args=[source_id]))
         article.refresh_from_db()
         profile.refresh_from_db()
         self.assertEqual(article.file_sha256, "b" * 64)
@@ -303,3 +303,81 @@ class JournalArticleManagementTests(TransactionTestCase):
         self.assertRedirects(response, reverse("management:article_edit", args=[source_id]))
         self.assertFalse(article.profile.processing_runs.exists())
         delayed_task.assert_not_called()
+
+    @patch("apps.management.views.extract_journal_article.delay")
+    def test_save_and_analyze_accepts_pdf_with_only_optional_metadata(self, delayed_task):
+        self.client.force_login(self.admin)
+        inspection = PdfInspection(sha256="d" * 64, page_count=3, extracted_text_chars=6000)
+        with patch("apps.management.forms.inspect_journal_pdf", return_value=inspection):
+            response = self.client.post(
+                reverse("management:article_create"),
+                {
+                    "pdf_file": self.pdf_upload(name="laryngeal-study.pdf"),
+                    "article_title": "",
+                    "category": "",
+                    "notes": "",
+                    "action": "analyze",
+                },
+            )
+
+        article = JournalArticleDetails.objects.get()
+        source = RagSourceDocument.objects.get(pk=article.profile.source_document_id)
+        self.assertRedirects(response, reverse("management:article_edit", args=[source.pk]))
+        self.assertEqual(article.article_title, "laryngeal study")
+        self.assertEqual(source.extraction_status, "queued")
+        delayed_task.assert_called_once_with(article.pk, use_openai=True)
+
+    @patch("apps.management.views.process_knowledge_source.delay")
+    def test_approve_and_publish_creates_publish_on_success_run(self, delayed_task):
+        article = self.create_article()
+        source = RagSourceDocument.objects.get(pk=article.profile.source_document_id)
+        extract_journal_article(article.pk, use_openai=False)
+
+        response = self.client.post(
+            reverse("management:article_edit", args=[source.pk]),
+            {**self.article_data(), "action": "publish"},
+        )
+
+        run = KnowledgeProcessingRun.objects.get()
+        self.assertRedirects(response, reverse("management:article_edit", args=[source.pk]))
+        self.assertTrue(run.publish_on_success)
+        self.assertFalse(article.profile.is_active)
+        delayed_task.assert_called_once_with(run.pk)
+
+    def test_publish_on_success_activates_article_after_chunks_complete(self):
+        article = self.create_article()
+        source = RagSourceDocument.objects.get(pk=article.profile.source_document_id)
+        extract_journal_article(article.pk, use_openai=False)
+        run = KnowledgeProcessingRun.objects.create(
+            profile=article.profile,
+            action=KnowledgeProcessingRun.Action.INITIAL,
+            embedding_model="text-embedding-3-small",
+            embedding_dimensions=1536,
+            chunk_size=900,
+            chunk_overlap=120,
+            initiated_by=self.admin,
+            publish_on_success=True,
+        )
+
+        with patch("apps.management.tasks._embed_chunks", return_value=[[0.0] * 1536]), patch(
+            "apps.management.tasks._replace_chunks"
+        ):
+            process_knowledge_source(run.pk)
+
+        article.profile.refresh_from_db()
+        self.assertTrue(article.profile.is_active)
+        self.assertEqual(article.profile.status, KnowledgeSourceProfile.Status.COMPLETED)
+        self.assertEqual(article.profile.approved_by, self.admin)
+
+    def test_delete_confirmation_requires_only_second_post(self):
+        article = self.create_article()
+        source_id = article.profile.source_document_id
+
+        confirmation = self.client.get(reverse("management:source_delete", args=[source_id]))
+        self.assertContains(confirmation, "Yes, delete permanently")
+        self.assertNotContains(confirmation, "Type <strong>")
+
+        response = self.client.post(reverse("management:source_delete", args=[source_id]))
+        self.assertRedirects(response, reverse("management:source_list"))
+        self.assertFalse(JournalArticleDetails.objects.filter(pk=article.pk).exists())
+        self.assertFalse(RagSourceDocument.objects.filter(pk=source_id).exists())
