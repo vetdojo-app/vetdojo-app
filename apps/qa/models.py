@@ -1,6 +1,9 @@
 from django.conf import settings
 from django.db import models
 
+from .pdf_validation import validate_journal_pdf
+from .storage import PrivateMediaStorage
+
 
 class RagSourceDocument(models.Model):
     id = models.BigAutoField(primary_key=True)
@@ -110,6 +113,7 @@ class AnswerSource(models.Model):
     chunk_index = models.IntegerField()
     similarity = models.FloatField()
     excerpt = models.TextField(blank=True)
+    citation_metadata = models.JSONField(default=dict, blank=True)
     citation_order = models.PositiveIntegerField()
 
     class Meta:
@@ -208,6 +212,7 @@ class KnowledgeBaseSettings(models.Model):
     ai_fallback_enabled = models.BooleanField(default=True)
     youtube_enabled = models.BooleanField(default=True)
     consultations_enabled = models.BooleanField(default=True)
+    journal_articles_enabled = models.BooleanField(default=True)
     updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -236,6 +241,94 @@ class ConsultationDetails(models.Model):
 
     def __str__(self):
         return self.case_reference
+
+
+class JournalArticleDetails(models.Model):
+    class ExtractionMethod(models.TextChoices):
+        PENDING = "pending", "Not processed"
+        LOCAL = "local", "Local PDF extraction"
+        OPENAI_ASSISTED = "openai_assisted", "OpenAI-assisted extraction"
+        HYBRID = "hybrid", "Hybrid extraction"
+
+    class MetadataAnalysisStatus(models.TextChoices):
+        NOT_REQUESTED = "not_requested", "Not requested"
+        PENDING = "pending", "Pending"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    profile = models.OneToOneField(
+        KnowledgeSourceProfile,
+        on_delete=models.CASCADE,
+        related_name="journal_article",
+    )
+    pdf_file = models.FileField(
+        upload_to="journal_articles/%Y/%m/",
+        storage=PrivateMediaStorage(),
+        validators=[validate_journal_pdf],
+    )
+    original_filename = models.CharField(max_length=255)
+    file_sha256 = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    article_title = models.TextField()
+    authors = models.TextField(blank=True)
+    journal = models.CharField(max_length=255, blank=True)
+    publication_year = models.PositiveSmallIntegerField(null=True, blank=True)
+    volume = models.CharField(max_length=40, blank=True)
+    issue = models.CharField(max_length=40, blank=True)
+    article_pages = models.CharField(max_length=80, blank=True)
+    doi = models.CharField(max_length=255, blank=True)
+    publisher_url = models.URLField(max_length=1000, blank=True)
+    abstract = models.TextField(blank=True)
+    pdf_page_count = models.PositiveIntegerField(null=True, blank=True)
+    extraction_method = models.CharField(
+        max_length=24,
+        choices=ExtractionMethod.choices,
+        default=ExtractionMethod.PENDING,
+    )
+    metadata_reviewed = models.BooleanField(default=False)
+    suggested_metadata = models.JSONField(default=dict, blank=True)
+    metadata_analysis_status = models.CharField(
+        max_length=16,
+        choices=MetadataAnalysisStatus.choices,
+        default=MetadataAnalysisStatus.NOT_REQUESTED,
+    )
+    extraction_warning = models.TextField(blank=True)
+    extracted_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        verbose_name = "journal article details"
+        verbose_name_plural = "journal article details"
+
+    def __str__(self):
+        return self.article_title or self.original_filename
+
+
+class JournalArticlePage(models.Model):
+    article = models.ForeignKey(
+        JournalArticleDetails,
+        on_delete=models.CASCADE,
+        related_name="pages",
+    )
+    pdf_page_number = models.PositiveIntegerField()
+    printed_page_number = models.CharField(max_length=20, blank=True)
+    raw_text = models.TextField()
+    cleaned_text = models.TextField()
+    text_char_count = models.PositiveIntegerField(default=0)
+    warnings = models.JSONField(default=list, blank=True)
+
+    class Meta:
+        ordering = ("pdf_page_number",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=("article", "pdf_page_number"),
+                name="unique_journal_article_pdf_page",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.article} - PDF page {self.pdf_page_number}"
 
 
 class KnowledgeProcessingRun(models.Model):

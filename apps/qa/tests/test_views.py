@@ -2,7 +2,7 @@ from unittest.mock import patch
 from django.test import TestCase
 from django.urls import reverse
 from apps.accounts.models import User
-from apps.qa.models import Answer, Question
+from apps.qa.models import Answer, AnswerSource, Question
 
 class QuestionViewsTests(TestCase):
     def setUp(self):
@@ -71,3 +71,57 @@ class QuestionViewsTests(TestCase):
         response = self.client.get(reverse("qa:detail", args=[question.pk]))
         self.assertContains(response, "1. Renal Disease: Details")
         self.assertNotContains(response, "**Renal Disease:**")
+
+    def test_journal_source_renders_page_citation_and_clickable_inline_reference(self):
+        question = Question.objects.create(user=self.user, text="What does the article report?", status=Question.Status.COMPLETE)
+        answer = Answer.objects.create(
+            question=question,
+            text="Supported by the article [Source 2].",
+            source_type=Answer.SourceType.CLIENT,
+            structured_content={
+                "summary": "Supported by the article [Source 2].",
+                "sections": [], "limitations": [], "cited_sources": [2],
+            },
+        )
+        AnswerSource.objects.create(
+            answer=answer, chunk_id=101, source_document_id=55,
+            source_type="journal_article", source_id="article-1",
+            source_title="Laryngeal surgery study",
+            source_url="https://doi.org/10.1000/example",
+            chunk_index=4, similarity=.88, excerpt="Article evidence",
+            citation_order=2,
+            citation_metadata={
+                "authors": "Example A, Example B", "journal": "Veterinary Surgery",
+                "publication_year": 2014, "volume": "43", "issue": "6",
+                "article_pages": "602-606", "doi": "10.1000/example",
+                "pdf_page_start": 3, "printed_page_start": "604",
+            },
+        )
+
+        response = self.client.get(reverse("qa:detail", args=[question.pk]))
+
+        self.assertContains(response, f'href="#answer-{answer.pk}-source-2"')
+        self.assertContains(response, 'id="answer-{}-source-2"'.format(answer.pk))
+        self.assertContains(response, "Journal article")
+        self.assertContains(response, "Example A, Example B")
+        self.assertContains(response, "PDF page 3")
+        self.assertContains(response, "Printed page 604")
+        self.assertContains(response, "Open article")
+
+    def test_unknown_inline_reference_is_not_linked_and_model_html_is_escaped(self):
+        question = Question.objects.create(user=self.user, text="Unsafe formatting", status=Question.Status.COMPLETE)
+        Answer.objects.create(
+            question=question,
+            text="Unsafe",
+            source_type=Answer.SourceType.CLIENT,
+            structured_content={
+                "summary": '<script>alert("x")</script> [Source 9]',
+                "sections": [], "limitations": [], "cited_sources": [],
+            },
+        )
+
+        response = self.client.get(reverse("qa:detail", args=[question.pk]))
+
+        self.assertNotContains(response, '<script>alert("x")</script>')
+        self.assertContains(response, '&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;', html=False)
+        self.assertNotContains(response, "inline-citation")

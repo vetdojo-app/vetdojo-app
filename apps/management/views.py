@@ -1,3 +1,6 @@
+import uuid
+from pathlib import Path
+
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import login, logout, update_session_auth_hash
@@ -5,12 +8,14 @@ from django.contrib.auth.decorators import user_passes_test
 from django.core.paginator import Paginator
 from django.db import DatabaseError, transaction
 from django.db.models import Exists, OuterRef, Q
+from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 
 from apps.qa.models import (
     ConsultationDetails,
+    JournalArticleDetails,
     KnowledgeBaseSettings,
     KnowledgeCategory,
     KnowledgeProcessingRun,
@@ -23,6 +28,7 @@ from apps.qa.services import generate_content, retrieve_chunks
 
 from .forms import (
     ConsultationForm,
+    JournalArticleForm,
     KnowledgeBaseSettingsForm,
     KnowledgeCategoryForm,
     ManagementAuthenticationForm,
@@ -31,7 +37,7 @@ from .forms import (
     RetrievalTestForm,
     SourceForm,
 )
-from .tasks import process_knowledge_source
+from .tasks import extract_journal_article, process_knowledge_source
 
 
 def has_management_access(user):
@@ -78,7 +84,8 @@ def dashboard(request):
     profiles = KnowledgeSourceProfile.objects.all()
     config = KnowledgeBaseSettings.objects.first()
     context = {
-        "transcript_count": 0, "consultation_count": 0, "source_count": 0, "chunk_count": 0,
+        "transcript_count": 0, "consultation_count": 0, "article_count": 0,
+        "source_count": 0, "chunk_count": 0,
         "active_count": profiles.filter(is_active=True).count(),
         "pending_count": profiles.filter(status=KnowledgeSourceProfile.Status.PENDING).count(),
         "failed_count": profiles.filter(status=KnowledgeSourceProfile.Status.FAILED).count(),
@@ -89,8 +96,11 @@ def dashboard(request):
     }
     try:
         context.update(
-            transcript_count=RagSourceDocument.objects.exclude(source_type="consultation").count(),
+            transcript_count=RagSourceDocument.objects.filter(
+                source_type__in=("youtube_video", "youtube_transcript")
+            ).count(),
             consultation_count=RagSourceDocument.objects.filter(source_type="consultation").count(),
+            article_count=RagSourceDocument.objects.filter(source_type="journal_article").count(),
             source_count=RagSourceDocument.objects.count(), chunk_count=RagChunk.objects.count(),
         )
     except DatabaseError:
@@ -109,7 +119,8 @@ def source_list(request):
 
     try:
         sources = RagSourceDocument.objects.only(
-            "id", "source_type", "source_id", "source_title", "source_url", "updated_at"
+            "id", "source_type", "source_id", "source_title", "source_url",
+            "extraction_status", "updated_at",
         ).order_by("-id")
         if kind:
             sources = sources.filter(source_type=kind)
@@ -135,8 +146,13 @@ def source_list(request):
                 )
             )
         }
+        article_profiles = {
+            article.profile_id: article
+            for article in JournalArticleDetails.objects.filter(profile_id__in=[profile.pk for profile in profiles.values()])
+        }
         for source in page_rows:
             source.profile_record = profiles.get(source.pk)
+            source.article_record = article_profiles.get(source.profile_record.pk) if source.profile_record else None
     except DatabaseError:
         page_obj = None
         page_range = []
@@ -156,6 +172,8 @@ def source_list(request):
 @management_required
 def source_edit(request, pk=None, source_kind=None):
     source = get_object_or_404(RagSourceDocument, pk=pk) if pk else None
+    if source and source.source_type == "journal_article":
+        return redirect("management:article_edit", pk=source.pk)
     previous_content = source.content if source else None
     previous_identity = (source.source_title, source.source_url) if source else None
     profile = KnowledgeSourceProfile.objects.filter(source_document_id=pk).first() if pk else None
@@ -210,11 +228,200 @@ def source_edit(request, pk=None, source_kind=None):
     })
 
 
+def _article_metadata(article):
+    return {
+        "article_title": article.article_title,
+        "authors": article.authors,
+        "journal": article.journal,
+        "publication_year": article.publication_year,
+        "volume": article.volume,
+        "issue": article.issue,
+        "article_pages": article.article_pages,
+        "doi": article.doi,
+        "publisher_url": article.publisher_url,
+    }
+
+
+def _article_source_url(article):
+    if article.publisher_url:
+        return article.publisher_url
+    return f"https://doi.org/{article.doi}" if article.doi else ""
+
+
+def _safe_upload_name(value):
+    return Path(str(value or "").replace("\\", "/")).name
+
+
+@management_required
+def article_edit(request, pk=None):
+    source = get_object_or_404(RagSourceDocument, pk=pk, source_type="journal_article") if pk else None
+    profile = KnowledgeSourceProfile.objects.filter(source_document_id=pk).first() if pk else None
+    article = JournalArticleDetails.objects.filter(profile=profile).first() if profile else None
+    if source and (not profile or not article):
+        raise Http404("Journal article details are unavailable.")
+
+    previous_citation_metadata = (
+        article.article_title,
+        article.authors,
+        article.journal,
+        article.publication_year,
+        article.volume,
+        article.issue,
+        article.article_pages,
+        article.doi,
+        article.publisher_url,
+    ) if article else None
+    article_form = JournalArticleForm(request.POST or None, request.FILES or None, instance=article)
+    profile_form = ProfileForm(request.POST or None, instance=profile)
+
+    if request.method == "POST" and article_form.is_valid() and profile_form.is_valid():
+        replacement_uploaded = "pdf_file" in request.FILES
+        with transaction.atomic():
+            saved_article = article_form.save(commit=False)
+            inspection = getattr(article_form, "pdf_inspection", None)
+
+            if source is None:
+                source = RagSourceDocument(
+                    source_type="journal_article",
+                    source_id=f"journal:{uuid.uuid4().hex}",
+                    content_type="journal_article",
+                    extraction_status="pending",
+                    content="",
+                    created_at=timezone.now(),
+                )
+            source.source_title = saved_article.article_title
+            source.title = saved_article.article_title
+            source.source_url = _article_source_url(saved_article)
+            source.metadata = _article_metadata(saved_article)
+            source.updated_at = timezone.now()
+            source.save()
+
+            saved_profile = profile_form.save(commit=False)
+            saved_profile.source_document_id = source.pk
+            saved_profile.created_by = saved_profile.created_by or request.user
+            saved_profile.updated_by = request.user
+
+            current_citation_metadata = (
+                saved_article.article_title,
+                saved_article.authors,
+                saved_article.journal,
+                saved_article.publication_year,
+                saved_article.volume,
+                saved_article.issue,
+                saved_article.article_pages,
+                saved_article.doi,
+                saved_article.publisher_url,
+            )
+            citation_changed = previous_citation_metadata is not None and previous_citation_metadata != current_citation_metadata
+            was_processed = bool(
+                profile and (
+                    profile.processing_runs.exists()
+                    or profile.status in {
+                        KnowledgeSourceProfile.Status.COMPLETED,
+                        KnowledgeSourceProfile.Status.INACTIVE,
+                        KnowledgeSourceProfile.Status.NEEDS_REPROCESSING,
+                    }
+                )
+            )
+            if (replacement_uploaded or citation_changed) and was_processed:
+                saved_profile.status = KnowledgeSourceProfile.Status.NEEDS_REPROCESSING
+                saved_profile.is_active = False
+                saved_profile.approved_by = None
+                saved_profile.approved_at = None
+            saved_profile.save()
+
+            saved_article.profile = saved_profile
+            if replacement_uploaded and inspection:
+                saved_article.original_filename = _safe_upload_name(request.FILES["pdf_file"].name)
+                saved_article.file_sha256 = inspection.sha256
+                saved_article.pdf_page_count = inspection.page_count
+                saved_article.extraction_method = JournalArticleDetails.ExtractionMethod.PENDING
+                saved_article.extraction_warning = ""
+                saved_article.suggested_metadata = {}
+                saved_article.metadata_analysis_status = JournalArticleDetails.MetadataAnalysisStatus.NOT_REQUESTED
+                saved_article.extracted_at = None
+                source.content = ""
+                source.extraction_status = "pending"
+                source.save(update_fields=("content", "extraction_status", "updated_at"))
+            saved_article.save()
+            if replacement_uploaded:
+                saved_article.pages.all().delete()
+
+        messages.success(
+            request,
+            "Journal article saved. Processing has not started." if pk is None else "Journal article updated.",
+        )
+        return redirect("management:source_list")
+
+    return render(request, "management/article_form.html", {
+        "article_form": article_form,
+        "profile_form": profile_form,
+        "source": source,
+        "article": article,
+    })
+
+
+@management_required
+def article_download(request, pk):
+    profile = get_object_or_404(KnowledgeSourceProfile, source_document_id=pk)
+    article = get_object_or_404(JournalArticleDetails, profile=profile)
+    try:
+        file_handle = article.pdf_file.open("rb")
+    except (FileNotFoundError, OSError) as exc:
+        raise Http404("The private PDF file is unavailable.") from exc
+    response = FileResponse(
+        file_handle,
+        as_attachment=True,
+        filename=_safe_upload_name(article.original_filename),
+        content_type="application/pdf",
+    )
+    response["Cache-Control"] = "private, no-store"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@management_required
+def queue_article_extraction(request, pk):
+    if request.method != "POST":
+        return redirect("management:source_list")
+    profile = get_object_or_404(KnowledgeSourceProfile, source_document_id=pk)
+    article = get_object_or_404(JournalArticleDetails, profile=profile)
+    source = get_object_or_404(RagSourceDocument, pk=pk, source_type="journal_article")
+    if source.extraction_status in {"queued", "processing"}:
+        messages.warning(request, "This article already has a pending or active extraction job.")
+        return redirect("management:article_edit", pk=pk)
+
+    use_openai = settings.OPENAI_PDF_ANALYSIS_ENABLED and request.POST.get("use_openai", "1") == "1"
+    source.extraction_status = "queued"
+    source.save(update_fields=("extraction_status", "updated_at"))
+    article.metadata_analysis_status = (
+        JournalArticleDetails.MetadataAnalysisStatus.PENDING
+        if use_openai else JournalArticleDetails.MetadataAnalysisStatus.NOT_REQUESTED
+    )
+    article.extraction_warning = ""
+    article.save(update_fields=("metadata_analysis_status", "extraction_warning", "updated_at"))
+    extract_journal_article.delay(article.pk, use_openai=use_openai)
+    messages.success(request, "PDF extraction queued. Refresh this page to see the result.")
+    return redirect("management:article_edit", pk=pk)
+
+
 @management_required
 def queue_processing(request, pk):
     if request.method != "POST":
         return redirect("management:source_list")
     profile = get_object_or_404(KnowledgeSourceProfile, source_document_id=pk)
+    try:
+        source = RagSourceDocument.objects.get(pk=pk)
+    except RagSourceDocument.DoesNotExist as exc:
+        raise Http404("Knowledge source not found.") from exc
+    if getattr(source, "source_type", "") == "journal_article":
+        article = get_object_or_404(JournalArticleDetails, profile=profile)
+        if source.extraction_status != "success" or not article.pages.exists():
+            messages.error(request, "Extract this PDF successfully before generating searchable chunks.")
+            return redirect("management:article_edit", pk=pk)
+        if not article.metadata_reviewed:
+            messages.error(request, "Confirm the article metadata before generating citation-ready chunks.")
+            return redirect("management:article_edit", pk=pk)
     if profile.processing_runs.filter(
         status__in=(KnowledgeProcessingRun.Status.PENDING, KnowledgeProcessingRun.Status.PROCESSING)
     ).exists():
@@ -228,7 +435,7 @@ def queue_processing(request, pk):
         embedding_dimensions=config.embedding_dimensions if config else settings.OPENAI_EMBEDDING_DIMENSIONS,
         chunk_size=config.chunk_size if config else settings.RAG_CHUNK_SIZE,
         chunk_overlap=config.chunk_overlap if config else settings.RAG_CHUNK_OVERLAP,
-        estimated_tokens=max(1, len((RagSourceDocument.objects.get(pk=pk).content or "")) // 4),
+        estimated_tokens=max(1, len((source.content or "")) // 4),
         initiated_by=request.user,
     )
     profile.status = KnowledgeSourceProfile.Status.PENDING

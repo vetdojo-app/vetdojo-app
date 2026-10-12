@@ -1,0 +1,31 @@
+{% extends "management/base.html" %}{% block title %}{% if article %}Edit{% else %}Add{% endif %} journal article{% endblock %}{% block content %}
+<div class="page-heading"><div><p class="eyebrow">Journal article</p><h1>{% if article %}Edit journal article{% else %}Add journal article{% endif %}</h1><p>Upload a reviewed text-based PDF and confirm its bibliographic information. Saving does not process or activate the article.</p></div></div>
+{% if article %}
+<section class="panel">
+  <h2>PDF extraction</h2>
+  <p><strong>Status:</strong> {{ source.extraction_status|capfirst }}</p>
+  {% if article.extracted_at %}<p><strong>Last extracted:</strong> {{ article.extracted_at }} · {{ article.pages.count }} page{{ article.pages.count|pluralize }} with extracted text</p>{% endif %}
+  <p><strong>Metadata analysis:</strong> {{ article.get_metadata_analysis_status_display }}</p>
+  {% if article.extraction_warning %}<div class="review-warning">{{ article.extraction_warning|linebreaksbr }}</div>{% endif %}
+  {% if article.suggested_metadata %}
+    <h3>Suggested metadata</h3>
+    <p>Review these suggestions before manually updating the bibliographic fields below.</p>
+    <dl>{% for key, value in article.suggested_metadata.items %}{% if key != "quality_warnings" and value %}<dt>{{ key|title }}</dt><dd>{{ value }}</dd>{% endif %}{% endfor %}</dl>
+  {% endif %}
+  <form method="post" action="{% url 'management:article_extract' source.pk %}">{% csrf_token %}
+    <input type="hidden" name="use_openai" value="1">
+    <button class="button" type="submit" {% if source.extraction_status == "queued" or source.extraction_status == "processing" %}disabled{% endif %}>{% if article.extracted_at %}Re-extract PDF{% else %}Extract PDF{% endif %}</button>
+  </form>
+  {% if source.extraction_status == "success" %}
+  <form method="post" action="{% url 'management:process' source.pk %}">{% csrf_token %}
+    <button class="button secondary" type="submit">{% if profile_form.instance.processing_runs.exists %}Regenerate searchable chunks{% else %}Generate searchable chunks{% endif %}</button>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
+<form method="post" enctype="multipart/form-data" class="source-form">{% csrf_token %}
+  <section class="panel"><h2>Private PDF</h2>{% if article %}<div class="current-file"><strong>{{ article.original_filename }}</strong><small>{{ article.pdf_page_count|default:"Unknown" }} pages · stored privately</small><a href="{% url 'management:article_download' source.pk %}">Download current PDF</a></div>{% endif %}{{ article_form.pdf_file.errors }}{{ article_form.pdf_file.label_tag }}{{ article_form.pdf_file }}{% if article_form.pdf_file.help_text %}<span class="helptext">{{ article_form.pdf_file.help_text }}</span>{% endif %}</section>
+  <section class="panel"><h2>Bibliographic information</h2>{% for field in article_form %}{% if field.name != "pdf_file" %}<div>{{ field.errors }}{{ field.label_tag }}{{ field }}{% if field.help_text %}<span class="helptext">{{ field.help_text }}</span>{% endif %}</div>{% endif %}{% endfor %}</section>
+  <section class="panel"><h2>Lifecycle and review</h2><p class="privacy-note">New and replacement PDFs remain non-searchable until processing succeeds and an administrator activates the source.</p>{{ profile_form.as_div }}</section>
+  <div class="form-actions"><a href="{% url 'management:source_list' %}">Cancel</a><button class="button" type="submit">Save without processing</button></div>
+</form>{% endblock %}

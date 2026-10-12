@@ -3,11 +3,13 @@ from django.contrib.auth.forms import AuthenticationForm, PasswordChangeForm
 
 from apps.qa.models import (
     ConsultationDetails,
+    JournalArticleDetails,
     KnowledgeBaseSettings,
     KnowledgeCategory,
     KnowledgeSourceProfile,
     RagSourceDocument,
 )
+from apps.qa.pdf_validation import inspect_journal_pdf
 
 
 class SourceForm(forms.ModelForm):
@@ -113,6 +115,79 @@ class ConsultationForm(forms.ModelForm):
     def searchable_document(self):
         prepared = normalize_text_encoding(self.cleaned_data.get("prepared_text", ""))
         return prepared or normalize_text_encoding(self.normalized_document())
+
+
+class JournalArticleForm(forms.ModelForm):
+    class Meta:
+        model = JournalArticleDetails
+        fields = (
+            "pdf_file", "article_title", "authors", "journal", "publication_year",
+            "volume", "issue", "article_pages", "doi", "publisher_url", "abstract",
+            "metadata_reviewed",
+        )
+        help_texts = {
+            "pdf_file": (
+                "Text-based PDF only, up to 25 MB. The original file remains private and is not shared with public users."
+            ),
+            "article_pages": "Printed journal page range, for example 602-606.",
+            "metadata_reviewed": "Confirm that the title, authors, journal, year and DOI are accurate.",
+        }
+        widgets = {
+            # The current private PDF is shown through the protected management
+            # download view; rendering ClearableFileInput would request storage.url().
+            "pdf_file": forms.FileInput(attrs={"accept": "application/pdf,.pdf"}),
+            "article_title": forms.TextInput(attrs={"placeholder": "Full article title"}),
+            "authors": forms.Textarea(attrs={"rows": 2, "placeholder": "e.g. Guillemot A, Rouvre G, Autefage A, et al."}),
+            "journal": forms.TextInput(attrs={"placeholder": "e.g. Veterinary Surgery"}),
+            "publication_year": forms.NumberInput(attrs={"placeholder": "e.g. 2014", "min": 1800, "max": 2100}),
+            "volume": forms.TextInput(attrs={"placeholder": "e.g. 43"}),
+            "issue": forms.TextInput(attrs={"placeholder": "e.g. 6"}),
+            "article_pages": forms.TextInput(attrs={"placeholder": "e.g. 602-606"}),
+            "doi": forms.TextInput(attrs={"placeholder": "e.g. 10.1111/j.1532-950X.2014.12300.x"}),
+            "publisher_url": forms.URLInput(attrs={"placeholder": "https://doi.org/..."}),
+            "abstract": forms.Textarea(attrs={"rows": 5, "placeholder": "Optional article abstract"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance and self.instance.pk:
+            self.fields["pdf_file"].required = False
+            self.fields["pdf_file"].help_text = (
+                "Leave unchanged to keep the current private PDF. Uploading a replacement requires reprocessing."
+            )
+
+    def clean_publication_year(self):
+        year = self.cleaned_data.get("publication_year")
+        if year is not None and not 1800 <= year <= 2100:
+            raise forms.ValidationError("Enter a publication year between 1800 and 2100.")
+        return year
+
+    def clean_doi(self):
+        doi = (self.cleaned_data.get("doi") or "").strip()
+        for prefix in ("https://doi.org/", "http://doi.org/", "doi:"):
+            if doi.lower().startswith(prefix):
+                doi = doi[len(prefix):].strip()
+                break
+        return doi
+
+    def clean_pdf_file(self):
+        uploaded_file = self.cleaned_data.get("pdf_file")
+        if not uploaded_file:
+            if not self.instance.pk:
+                raise forms.ValidationError("Select a journal article PDF.")
+            return uploaded_file
+        if not hasattr(uploaded_file, "content_type"):
+            return uploaded_file
+
+        inspection = inspect_journal_pdf(uploaded_file)
+        uploaded_file._vetdojo_pdf_inspection = inspection
+        duplicates = JournalArticleDetails.objects.filter(file_sha256=inspection.sha256)
+        if self.instance.pk:
+            duplicates = duplicates.exclude(pk=self.instance.pk)
+        if duplicates.exists():
+            raise forms.ValidationError("This PDF has already been uploaded.", code="duplicate_pdf")
+        self.pdf_inspection = inspection
+        return uploaded_file
 
 
 def normalize_text_encoding(value):

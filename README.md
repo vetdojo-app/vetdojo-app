@@ -1,6 +1,6 @@
-# VetDojo — Phase 3
+# VetDojo
 
-Django web application for authenticated, source-aware veterinary clinical Q&A. It searches the existing Phase 2 `rag_chunks` data first, creates a grounded answer with YouTube references when evidence is sufficient, and clearly labels general-AI fallback answers.
+Django web application for authenticated, source-aware veterinary clinical Q&A. It searches the VetDojo knowledge base first, creates a grounded answer with source citations when evidence is sufficient, and clearly labels general-AI fallback answers.
 
 ## Features
 
@@ -9,7 +9,8 @@ Django web application for authenticated, source-aware veterinary clinical Q&A. 
 - Read-only Django mappings to `rag_source_documents` and `rag_chunks`
 - pgvector retrieval through the existing `match_rag_chunks` function
 - Configurable relevance threshold, context limits, and overlap deduplication
-- Structured library-based answers with video citations
+- Structured library-based answers with citations to transcripts, consultations, and journal articles
+- Private journal PDF upload, validation, extraction, metadata review, page-aware chunking, and retrieval
 - Automatic general-AI response when library evidence is insufficient
 - Optional separate AI alternative after a library-based answer
 - Versioned exact-question AI fallback cache (library search always runs first)

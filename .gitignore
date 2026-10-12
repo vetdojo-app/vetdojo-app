@@ -1,6 +1,7 @@
 .env
 .env.*
-.env.example
+!.env.example
+!.env.production.example
 
 .venv/
 venv/
@@ -12,6 +13,7 @@ db.sqlite3
 *.sqlite3
 staticfiles/
 media/
+private_media/
 
 .idea/
 .vscode/

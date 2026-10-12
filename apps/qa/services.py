@@ -44,6 +44,8 @@ def enabled_source_types(config):
         values.extend(("youtube_video", "youtube_transcript"))
     if config.consultations_enabled:
         values.append("consultation")
+    if config.journal_articles_enabled:
+        values.append("journal_article")
     return values
 
 
@@ -64,6 +66,7 @@ class RetrievedChunk:
     metadata: dict
     lexical_score: float = 0.0
     relevance_score: float = 0.0
+    prompt_index: int = 0
 
 
 def normalize_metadata(value):
@@ -341,22 +344,95 @@ def parse_model_json(raw):
     }
 
 
+ANSWER_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "vetdojo_grounded_answer",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "evidence_sufficient": {"type": "boolean"},
+                "summary": {"type": "string"},
+                "sections": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "heading": {"type": "string"},
+                            "content": {"type": "string"},
+                        },
+                        "required": ["heading", "content"],
+                        "additionalProperties": False,
+                    },
+                },
+                "limitations": {"type": "array", "items": {"type": "string"}},
+                "cited_sources": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+            },
+            "required": ["evidence_sufficient", "summary", "sections", "limitations", "cited_sources"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+def source_context_block(chunk, number):
+    metadata = normalize_metadata(chunk.metadata)
+    lines = [
+        f'<SOURCE id="source{number}">',
+        f"Source number: {number}",
+        f"Source type: {chunk.source_type}",
+        f"Title: {chunk.source_title or 'Untitled'}",
+    ]
+    if chunk.source_type == "journal_article":
+        if metadata.get("authors"):
+            lines.append(f"Authors: {metadata['authors']}")
+        publication = ", ".join(
+            str(value) for value in (
+                metadata.get("journal"), metadata.get("publication_year"),
+                metadata.get("volume"), metadata.get("issue"),
+            ) if value
+        )
+        if publication:
+            lines.append(f"Publication: {publication}")
+        if metadata.get("doi"):
+            lines.append(f"DOI: {metadata['doi']}")
+        if metadata.get("pdf_page_start"):
+            lines.append(f"PDF page: {metadata['pdf_page_start']}")
+        if metadata.get("printed_page_start"):
+            lines.append(f"Printed page: {metadata['printed_page_start']}")
+    elif chunk.source_type == "consultation":
+        lines.append("Origin: De-identified VetDojo clinical consultation")
+    else:
+        lines.append("Origin: VetDojo video transcript")
+    if chunk.source_url:
+        lines.append(f"URL: {chunk.source_url}")
+    lines.extend(("Content:", chunk.chunk_text, "</SOURCE>"))
+    return "\n".join(lines)
+
+
+def source_fallback_title(chunk):
+    if chunk.source_type == "consultation":
+        return "Clinical case"
+    if chunk.source_type == "journal_article":
+        return "Untitled journal article"
+    return "Untitled video"
+
+
 def generate_content(question, chunks=None):
     config = knowledge_config()
     chunks = chunks or []
     grounded = bool(chunks)
     if grounded:
-        context = "\n\n".join(
-            f"[SOURCE {i}] Title: {c.source_title}\nChunk ID: {c.chunk_id}\nContent: {c.chunk_text}"
-            for i, c in enumerate(chunks, 1)
-        )
+        context = "\n\n".join(source_context_block(c, i) for i, c in enumerate(chunks, 1))
         system = (
-            "You are a veterinary clinical education assistant using excerpts from the VetDojo knowledge base, which may include specialist videos and de-identified consultations. "
+            "You are a veterinary clinical education assistant using citable excerpts from the VetDojo knowledge base. Sources may be specialist video transcripts, de-identified consultations, or journal articles. "
             "First decide whether the excerpts directly and materially answer the question. Unrelated procedural content is insufficient. "
             "If insufficient, set evidence_sufficient=false and do not manufacture an answer. If sufficient, set it true and provide a detailed, "
             "well-organized answer using only supported facts. Aim for 500-900 words when the evidence supports that depth; be shorter when it does not. "
             "Use practical headings such as assessment/planning, approach, fixation, growth-plate considerations, intraoperative checks, postoperative care, "
-            "and cautions only where supported. Cite claims inline as [Source N]. Return cited_sources as the source numbers actually used. "
+            "and cautions only where supported. Cite each supported claim inline as [Source N], using exactly the number supplied with the source. "
+            "Never cite a source that does not directly support the claim and never invent a source number. Return cited_sources as the unique source numbers actually used. "
             "Return JSON with evidence_sufficient (boolean), summary (string), sections (array of heading/content objects), limitations (array), and cited_sources (array of integers)."
         )
         user = f"Clinical question: {question}\n\nVetDojo excerpts:\n{context}"
@@ -370,7 +446,7 @@ def generate_content(question, chunks=None):
     response = openai_client().chat.completions.create(
         model=config.chat_model,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-        response_format={"type": "json_object"}, temperature=0.2,
+        response_format=ANSWER_RESPONSE_FORMAT, temperature=0.2,
     )
     content = parse_model_json(response.choices[0].message.content or "")
     usage = response.usage
@@ -378,17 +454,15 @@ def generate_content(question, chunks=None):
 
 
 def cited_chunks(content, chunks):
-    valid_numbers = [number for number in content.get("cited_sources", []) if number <= len(chunks)]
+    valid_numbers = [number for number in content.get("cited_sources", []) if 1 <= number <= len(chunks)]
     if not content.get("evidence_sufficient") or not valid_numbers:
         return []
-    # One visible card per supporting video; inline source numbers remain in the answer.
-    selected, source_ids = [], set()
+    selected, chunk_ids = [], set()
     for number in valid_numbers:
         chunk = chunks[number - 1]
-        source_key = (chunk.source_type, chunk.source_id)
-        if source_key not in source_ids:
-            selected.append(chunk)
-            source_ids.add(source_key)
+        if chunk.chunk_id not in chunk_ids:
+            selected.append(replace(chunk, prompt_index=number))
+            chunk_ids.add(chunk.chunk_id)
     return selected
 
 
@@ -411,14 +485,18 @@ def save_answer(question, content, source_type, chunks, started_at, input_tokens
         duration_ms=int((time.monotonic() - started_at) * 1000),
     )
     for order, chunk in enumerate(chunks, 1):
+        metadata = normalize_metadata(chunk.metadata)
         AnswerSource.objects.create(
             answer=answer, chunk_id=chunk.chunk_id,
-            source_document_id=normalize_metadata(chunk.metadata).get("source_document_id"),
+            source_document_id=metadata.get("source_document_id"),
             source_type=chunk.source_type,
             source_id=chunk.source_id,
-            source_title=chunk.source_title or ("Clinical case" if chunk.source_type == "consultation" else "Untitled video"),
+            source_title=chunk.source_title or source_fallback_title(chunk),
             source_url=chunk.source_url or "", chunk_index=chunk.chunk_index,
-            similarity=chunk.relevance_score or chunk.similarity, excerpt=chunk.chunk_text[:700], citation_order=order,
+            similarity=chunk.relevance_score or chunk.similarity,
+            excerpt=chunk.chunk_text[:700],
+            citation_metadata=metadata,
+            citation_order=chunk.prompt_index or order,
         )
     return answer
 
