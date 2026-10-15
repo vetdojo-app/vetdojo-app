@@ -1,0 +1,67 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Voice testing — VetDojo{% endblock %}
+{% block head %}<link rel="stylesheet" href="{% static 'css/voice.css' %}">{% endblock %}
+{% block content %}
+<section class="voice-shell" data-voice-app data-session-url="{% url 'qa:voice_session' %}" data-query-url="{% url 'qa:voice_query' %}" data-query-timeout-ms="{{ voice_query_timeout_ms }}">
+  <header class="voice-heading">
+    <div>
+      <span class="eyebrow"><span></span> Voice proof of concept</span>
+      <h1>Talk with VetDojo</h1>
+      <p>Ask questions aloud and receive spoken answers grounded in VetDojo's knowledge library.</p>
+    </div>
+    <a class="history-link" href="{% url 'qa:dashboard' %}">Return to text search <span>→</span></a>
+  </header>
+
+  <div class="voice-notice" role="note">
+    <strong>Voice testing mode</strong>
+    <p>Questions and answers are saved to your history. References are shown on screen and are not read aloud.</p>
+  </div>
+
+  <div class="voice-layout">
+    <section class="voice-console" aria-labelledby="voice-status-title">
+      <div class="voice-orb" data-voice-orb aria-hidden="true"><span></span><span></span><span></span></div>
+      <div class="voice-state">
+        <span class="voice-state-label">STATUS</span>
+        <h2 id="voice-status-title" data-voice-status>Ready to start</h2>
+        <p data-voice-help>Select Start conversation and allow microphone access when prompted.</p>
+      </div>
+
+      <div class="voice-error" data-voice-error role="alert" hidden></div>
+      <div class="voice-controls">
+        <button class="button voice-start" type="button" data-voice-start>
+          <span class="voice-control-icon" aria-hidden="true">●</span> Start conversation
+        </button>
+        <button class="voice-secondary" type="button" data-voice-mute disabled aria-pressed="false">
+          Mute microphone
+        </button>
+        <button class="voice-secondary voice-end" type="button" data-voice-end disabled>
+          End conversation
+        </button>
+      </div>
+      <p class="voice-privacy">Your browser sends microphone audio through an encrypted realtime connection. The permanent API key is never sent to this page.</p>
+      <p class="voice-handsfree"><strong>Hands-free:</strong> Pause naturally when you finish. Start speaking again to interrupt VetDojo.</p>
+      <form class="voice-csrf" aria-hidden="true">{% csrf_token %}</form>
+      <audio data-voice-audio autoplay></audio>
+    </section>
+
+    <section class="voice-transcript" aria-labelledby="voice-transcript-title" aria-live="polite">
+      <div class="voice-panel-heading">
+        <div><span>LIVE CONVERSATION</span><h2 id="voice-transcript-title">Transcript</h2></div>
+        <button type="button" data-voice-clear>Clear</button>
+      </div>
+      <div class="voice-turns" data-voice-turns>
+        <div class="voice-empty" data-voice-empty>
+          <span>◌</span>
+          <p>Your conversation will appear here after you start speaking.</p>
+        </div>
+      </div>
+      <div class="voice-sources-placeholder" data-voice-sources>
+        <span>REFERENCES</span>
+        <p data-voice-sources-empty>References for the latest answer will appear here.</p>
+      </div>
+    </section>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{% static 'js/voice.js' %}" defer></script>{% endblock %}
