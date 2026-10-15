@@ -103,9 +103,9 @@
 
   function normalizedControlCommand(transcript) {
     const value = String(transcript || "").toLowerCase().replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
-    if (["stop", "please stop", "stop please", "stop conversation", "stop the conversation", "end conversation", "end the conversation"].includes(value)) return "stop";
-    if (["pause", "please pause", "pause please", "pause conversation", "pause the conversation"].includes(value)) return "pause";
-    if (["resume", "please resume", "continue", "please continue", "resume conversation", "resume the conversation", "continue conversation"].includes(value)) return "resume";
+    if (["stop", "ok stop", "okay stop", "please stop", "stop now", "stop please", "stop conversation", "stop the conversation", "end conversation", "end the conversation"].includes(value)) return "stop";
+    if (["pause", "ok pause", "okay pause", "please pause", "pause now", "pause please", "pause conversation", "pause the conversation"].includes(value)) return "pause";
+    if (["resume", "ok resume", "okay resume", "please resume", "continue", "please continue", "resume conversation", "resume the conversation", "continue conversation"].includes(value)) return "resume";
     return null;
   }
 

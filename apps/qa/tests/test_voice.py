@@ -65,6 +65,7 @@ class VoiceSessionTests(TestCase):
         self.assertTemplateUsed(response, "qa/voice.html")
         self.assertContains(response, reverse("qa:voice_session"))
         self.assertContains(response, "Start conversation")
+        self.assertContains(response, "voice.js?v=20261015-2")
 
     def test_unapproved_user_cannot_open_voice_dashboard(self):
         self.client.force_login(self.user)
@@ -161,6 +162,7 @@ class VoiceSessionTests(TestCase):
         )
         self.assertIn("Always understand and respond in English", call.kwargs["session"]["instructions"])
         self.assertIn("Never send these control commands", call.kwargs["session"]["instructions"])
+        self.assertIn("interarytenoid band", call.kwargs["session"]["instructions"])
         self.assertNotIn("test-key", result.values())
 
     @override_settings(VOICE_CLIENT_SECRET_TTL_SECONDS=5)

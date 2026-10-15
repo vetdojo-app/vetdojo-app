@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% load static %}
 {% block title %}Voice testing — VetDojo{% endblock %}
-{% block head %}<link rel="stylesheet" href="{% static 'css/voice.css' %}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{% static 'css/voice.css' %}?v=20261015-2">{% endblock %}
 {% block content %}
 <section class="voice-shell" data-voice-app data-session-url="{% url 'qa:voice_session' %}" data-query-url="{% url 'qa:voice_query' %}" data-query-timeout-ms="{{ voice_query_timeout_ms }}">
   <header class="voice-heading">
@@ -64,4 +64,4 @@
   </div>
 </section>
 {% endblock %}
-{% block scripts %}<script src="{% static 'js/voice.js' %}" defer></script>{% endblock %}
+{% block scripts %}<script src="{% static 'js/voice.js' %}?v=20261015-2" defer></script>{% endblock %}
