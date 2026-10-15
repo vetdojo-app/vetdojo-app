@@ -95,18 +95,44 @@ def create_realtime_client_secret(user):
                             "properties": {
                                 "question": {
                                     "type": "string",
-                                    "description": "The user's complete veterinary question.",
+                                    "description": (
+                                        "The user's question rewritten as a complete standalone English question, "
+                                        "resolving follow-ups such as 'explain that' from conversation context."
+                                    ),
                                 }
                             },
                             "required": ["question"],
                             "additionalProperties": False,
                         },
-                    }
+                    },
+                    {
+                        "type": "function",
+                        "name": "stop_voice_session",
+                        "description": "End the voice session immediately when the user says stop or asks to end the conversation.",
+                        "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+                    },
+                    {
+                        "type": "function",
+                        "name": "pause_voice_session",
+                        "description": "Pause answering when the user says pause. Do not search the knowledge base.",
+                        "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+                    },
+                    {
+                        "type": "function",
+                        "name": "resume_voice_session",
+                        "description": "Resume listening when a paused user says resume or continue.",
+                        "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+                    },
                 ],
                 "tool_choice": "required",
                 "instructions": (
-                    "You are VetDojo's hands-free veterinary education assistant. For every user "
-                    "question, call search_vetdojo_knowledge and do not answer from your own knowledge. "
+                    "You are VetDojo's English-only hands-free veterinary education assistant. Always "
+                    "understand and respond in English, even if earlier content contains another language. "
+                    "When the user says stop, call stop_voice_session. When the user says pause, call "
+                    "pause_voice_session. When the user says resume or continue after pausing, call "
+                    "resume_voice_session. Never send these control commands to the knowledge search. "
+                    "For every actual user question, call search_vetdojo_knowledge and do not answer from your own knowledge. "
+                    "Rewrite follow-up questions into complete standalone English questions using the conversation context before searching. "
                     "After the tool returns, speak its spoken_answer faithfully and concisely. Do not "
                     "read references, URLs, citation markers, or technical metadata aloud because they "
                     "are displayed on screen. If the tool reports an error, briefly ask the user to try again."

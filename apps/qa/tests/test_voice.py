@@ -150,6 +150,17 @@ class VoiceSessionTests(TestCase):
         )
         self.assertEqual(call.kwargs["session"]["tool_choice"], "required")
         self.assertEqual(call.kwargs["session"]["tools"][0]["name"], "search_vetdojo_knowledge")
+        self.assertEqual(
+            [tool["name"] for tool in call.kwargs["session"]["tools"]],
+            [
+                "search_vetdojo_knowledge",
+                "stop_voice_session",
+                "pause_voice_session",
+                "resume_voice_session",
+            ],
+        )
+        self.assertIn("Always understand and respond in English", call.kwargs["session"]["instructions"])
+        self.assertIn("Never send these control commands", call.kwargs["session"]["instructions"])
         self.assertNotIn("test-key", result.values())
 
     @override_settings(VOICE_CLIENT_SECRET_TTL_SECONDS=5)

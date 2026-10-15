@@ -32,6 +32,8 @@
   let responseInProgress = false;
   let awaitingResponse = false;
   let toolInProgress = false;
+  let isPaused = false;
+  let pendingControlCommand = null;
   let connectionAttempt = 0;
   const transcriptNodes = new Map();
   const processedToolCalls = new Set();
@@ -99,6 +101,65 @@
     eventChannel.send(JSON.stringify(event));
   }
 
+  function normalizedControlCommand(transcript) {
+    const value = String(transcript || "").toLowerCase().replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
+    if (["stop", "please stop", "stop please", "stop conversation", "stop the conversation", "end conversation", "end the conversation"].includes(value)) return "stop";
+    if (["pause", "please pause", "pause please", "pause conversation", "pause the conversation"].includes(value)) return "pause";
+    if (["resume", "please resume", "continue", "please continue", "resume conversation", "resume the conversation", "continue conversation"].includes(value)) return "resume";
+    return null;
+  }
+
+  function setPausedState() {
+    isPaused = true;
+    responseInProgress = false;
+    awaitingResponse = false;
+    setState("paused", "Conversation paused", "Say Resume or Continue when you are ready. Say Stop to end.");
+  }
+
+  function applyTranscriptControl(transcript) {
+    const command = normalizedControlCommand(transcript);
+    if (!command) return false;
+    pendingControlCommand = command;
+    window.setTimeout(() => {
+      if (pendingControlCommand === command) pendingControlCommand = null;
+    }, 10000);
+    cancelActiveTool();
+    if (command === "stop") {
+      cleanup();
+      setState("ended", "Conversation ended", "Voice command received. Your microphone has been disconnected safely.");
+    } else if (command === "pause") {
+      setPausedState();
+    } else {
+      isPaused = false;
+      setState("listening", "Listening", "Conversation resumed. Ask your next question.");
+    }
+    return true;
+  }
+
+  function completeControlTool(event, command) {
+    try {
+      sendEvent({
+        type: "conversation.item.create",
+        item: {
+          type: "function_call_output",
+          call_id: event.call_id,
+          output: JSON.stringify({ status: command === "stop" ? "ended" : command === "pause" ? "paused" : "resumed" }),
+        },
+      });
+    } catch (_) { /* Transcript fallback may already have closed the session. */ }
+    pendingControlCommand = null;
+    toolInProgress = false;
+    if (command === "stop") {
+      cleanup();
+      setState("ended", "Conversation ended", "Voice command received. Your microphone has been disconnected safely.");
+    } else if (command === "pause") {
+      setPausedState();
+    } else {
+      isPaused = false;
+      setState("listening", "Listening", "Conversation resumed. Ask your next question.");
+    }
+  }
+
   function cancelActiveTool() {
     if (!activeToolRequest) return;
     activeToolRequest.controller.abort();
@@ -147,8 +208,29 @@
   }
 
   async function runKnowledgeTool(event) {
-    if (event.name !== "search_vetdojo_knowledge" || !event.call_id || processedToolCalls.has(event.call_id)) return;
+    if (!event.call_id || processedToolCalls.has(event.call_id)) return;
     processedToolCalls.add(event.call_id);
+    const toolCommands = {
+      stop_voice_session: "stop",
+      pause_voice_session: "pause",
+      resume_voice_session: "resume",
+    };
+    const command = toolCommands[event.name] || (event.name === "search_vetdojo_knowledge" ? pendingControlCommand : null);
+    if (command) {
+      completeControlTool(event, command);
+      return;
+    }
+    if (event.name !== "search_vetdojo_knowledge") return;
+    if (isPaused) {
+      try {
+        sendEvent({
+          type: "conversation.item.create",
+          item: { type: "function_call_output", call_id: event.call_id, output: JSON.stringify({ status: "paused" }) },
+        });
+      } catch (_) { /* Connection errors are handled separately. */ }
+      setPausedState();
+      return;
+    }
     toolInProgress = true;
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), queryTimeoutMs);
@@ -208,7 +290,7 @@
         type: "response.create",
         response: {
           tool_choice: "none",
-          instructions: "Speak only the tool's spoken_answer. Keep citation markers and references on screen; do not read them aloud. If the tool returned an error, briefly ask the user to try again.",
+          instructions: "Respond in English only. Speak only the tool's spoken_answer. Keep citation markers and references on screen; do not read them aloud. If the tool returned an error, briefly ask the user to try again in English.",
         },
       });
     } catch (error) {
@@ -221,7 +303,7 @@
     switch (event.type) {
       case "session.created":
       case "session.updated":
-        setState("listening", "Listening", "Ask a short question to test the voice connection.");
+        if (!isPaused) setState("listening", "Listening", "Ask a short question to test the voice connection.");
         break;
       case "input_audio_buffer.speech_started":
         cancelActiveTool();
@@ -243,8 +325,13 @@
         break;
       case "conversation.item.input_audio_transcription.completed":
         completeTranscript(event.item_id, "user", event.transcript);
+        applyTranscriptControl(event.transcript);
         break;
       case "response.created":
+        if (isPaused) {
+          setPausedState();
+          break;
+        }
         awaitingResponse = false;
         responseInProgress = true;
         setState("processing", "Preparing response", "VetDojo is about to speak.");
@@ -254,6 +341,7 @@
         runKnowledgeTool(event);
         break;
       case "response.output_audio_transcript.delta":
+        if (isPaused) break;
         responseInProgress = true;
         setState("speaking", "VetDojo is speaking", "You can listen or start speaking to interrupt.");
         appendTranscript(event.item_id || event.response_id, "assistant", event.delta);
@@ -264,6 +352,10 @@
       case "response.done":
         responseInProgress = false;
         if (toolInProgress) break;
+        if (isPaused) {
+          setPausedState();
+          break;
+        }
         if (event.response && ["failed", "incomplete"].includes(event.response.status)) {
           showError("The spoken response could not be completed. Please ask the question again.");
           break;
@@ -313,6 +405,8 @@
     responseInProgress = false;
     awaitingResponse = false;
     toolInProgress = false;
+    isPaused = false;
+    pendingControlCommand = null;
     processedToolCalls.clear();
     ui.mute.textContent = "Mute microphone";
     ui.mute.setAttribute("aria-pressed", "false");
