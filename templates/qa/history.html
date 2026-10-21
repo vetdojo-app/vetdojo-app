@@ -1,1 +1,31 @@
-{% extends 'base.html' %}{% block title %}Question history — VetDojo{% endblock %}{% block content %}<section class="app-shell narrow"><div class="dashboard-heading"><div><span class="eyebrow"><span></span> Your library</span><h1>Question history</h1><p>Return to previous answers and their source material.</p></div><a class="button button-small" href="{% url 'qa:dashboard' %}">Ask a question</a></div><div class="history-list large">{% for item in questions %}<a href="{% url 'qa:detail' item.pk %}" class="history-item"><span class="history-icon">?</span><div><strong>{{ item.text }}</strong><small>{{ item.created_at|date:"j M Y, H:i" }} · {{ item.answers.count }} answer{{ item.answers.count|pluralize }}</small></div><span class="status-pill {{ item.status }}">{{ item.get_status_display }}</span><span class="arrow">→</span></a>{% empty %}<div class="empty-state"><span>⌕</span><h2>No questions yet</h2><p>Your clinical searches will appear here.</p><a class="button" href="{% url 'qa:dashboard' %}">Ask your first question</a></div>{% endfor %}</div></section>{% endblock %}
+{% extends 'base.html' %}{% load static %}
+{% block title %}Learning history — VetDojo{% endblock %}
+{% block head %}<link rel="stylesheet" href="{% static 'css/conversation-history.css' %}?v=20261019-1">{% endblock %}
+{% block content %}
+<section class="app-shell history-shell">
+  <header class="dashboard-heading history-heading"><div><span class="eyebrow"><span></span> Your learning library</span><h1>Conversation history</h1><p>Return to typed answers or review complete voice conversations and their references.</p></div><div class="history-actions"><a class="button button-small" href="{% url 'qa:dashboard' %}">Ask with text</a>{% if voice_available %}<a class="button button-small button-secondary" href="{% url 'qa:voice_dashboard' %}">Start voice conversation</a>{% endif %}</div></header>
+
+  <nav class="history-jump" aria-label="History sections"><a href="#voice-conversations"><span>Voice</span><b>{{ voice_conversations|length }}</b></a><a href="#text-questions"><span>Text</span><b>{{ questions|length }}</b></a></nav>
+
+  <section id="voice-conversations" class="history-section">
+    <div class="section-row history-section-heading"><div><span class="section-kicker">VOICE SESSIONS</span><h2>Voice conversations</h2></div><p>Questions are grouped by the session in which they were asked.</p></div>
+    <div class="conversation-grid">
+      {% for conversation in voice_conversations %}
+      <a class="conversation-card" href="{% url 'qa:voice_conversation_detail' conversation.pk %}">
+        <div class="conversation-card-top"><span class="conversation-icon" aria-hidden="true"><i></i><i></i><i></i></span><span class="status-pill {{ conversation.status }}">{{ conversation.get_status_display }}</span></div>
+        <h3>{% if conversation.ordered_questions %}{{ conversation.ordered_questions.0.text|truncatechars:90 }}{% else %}Voice conversation{% endif %}</h3>
+        <p>{{ conversation.started_at|date:"j M Y, H:i" }}</p>
+        <div class="conversation-meta"><span>{{ conversation.ordered_questions|length }} question{{ conversation.ordered_questions|length|pluralize }}</span><strong>Review conversation <span>→</span></strong></div>
+      </a>
+      {% empty %}
+      <div class="history-empty"><span class="conversation-icon" aria-hidden="true"><i></i><i></i><i></i></span><h3>No saved voice conversations</h3><p>Completed voice sessions will be grouped here.</p></div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section id="text-questions" class="history-section">
+    <div class="section-row history-section-heading"><div><span class="section-kicker">TYPED QUESTIONS</span><h2>Text answers</h2></div><p>Individual questions submitted through the text assistant.</p></div>
+    <div class="history-list large">{% for item in questions %}<a href="{% url 'qa:detail' item.pk %}" class="history-item"><span class="history-icon">?</span><div><strong>{{ item.text }}</strong><small>{{ item.created_at|date:"j M Y, H:i" }} · {{ item.answers.count }} answer{{ item.answers.count|pluralize }}</small></div><span class="status-pill {{ item.status }}">{{ item.get_status_display }}</span><span class="arrow">→</span></a>{% empty %}<div class="history-empty"><span class="history-icon">?</span><h3>No typed questions yet</h3><p>Your text searches will appear here.</p></div>{% endfor %}</div>
+  </section>
+</section>
+{% endblock %}

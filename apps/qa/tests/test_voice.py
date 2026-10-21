@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -8,7 +9,8 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from apps.qa.voice import VoiceConfigurationError, create_realtime_client_secret, safety_identifier
-from apps.qa.models import Answer, AnswerSource, Question
+from apps.qa.disclaimer import DISCLAIMER_CONTENT_HASH, DISCLAIMER_VERSION
+from apps.qa.models import AIDisclaimerAcceptance, Answer, AnswerSource, Question, VoiceConversation
 
 
 User = get_user_model()
@@ -35,6 +37,13 @@ class VoiceSessionTests(TestCase):
         self.admin = User.objects.create_user("manager", "manager@example.com", "test-password-123")
         admin_group, _ = Group.objects.get_or_create(name="ADMIN")
         self.admin.groups.add(admin_group)
+        for user in (self.user, self.admin):
+            AIDisclaimerAcceptance.objects.create(
+                user=user,
+                disclaimer_version=DISCLAIMER_VERSION,
+                content_hash=DISCLAIMER_CONTENT_HASH,
+                source=AIDisclaimerAcceptance.Source.VOICE,
+            )
 
     def test_anonymous_user_must_log_in(self):
         response = self.client.post(reverse("qa:voice_session"))
@@ -65,7 +74,12 @@ class VoiceSessionTests(TestCase):
         self.assertTemplateUsed(response, "qa/voice.html")
         self.assertContains(response, reverse("qa:voice_session"))
         self.assertContains(response, "Start conversation")
-        self.assertContains(response, "voice.js?v=20261015-2")
+        self.assertContains(response, "Assistant input mode")
+        self.assertContains(response, reverse("qa:dashboard"))
+        self.assertContains(response, "Voice surgical assistant")
+        self.assertContains(response, "Meet the VetDojo Voice Assistant")
+        self.assertNotContains(response, "Voice proof of concept")
+        self.assertContains(response, "voice.js?v=20261019-1")
 
     def test_unapproved_user_cannot_open_voice_dashboard(self):
         self.client.force_login(self.user)
@@ -87,6 +101,12 @@ class VoiceSessionTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["client_secret"], "ek_test")
+        conversation = VoiceConversation.objects.get(user=self.user)
+        self.assertEqual(response.json()["conversation_id"], str(conversation.pk))
+        self.assertEqual(
+            response.json()["conversation_end_url"],
+            reverse("qa:voice_conversation_end", args=[conversation.pk]),
+        )
         self.assertEqual(response["Cache-Control"], "no-store")
         create_secret.assert_called_once_with(self.user)
 
@@ -178,6 +198,7 @@ class VoiceSessionTests(TestCase):
     @patch("apps.qa.views.answer_question")
     def test_voice_query_is_saved_and_returns_references(self, answer_question_mock):
         self.client.force_login(self.admin)
+        conversation = VoiceConversation.objects.create(user=self.admin)
 
         def create_answer(question):
             answer = Answer.objects.create(
@@ -198,7 +219,11 @@ class VoiceSessionTests(TestCase):
         answer_question_mock.side_effect = create_answer
         response = self.client.post(
             reverse("qa:voice_query"),
-            data='{"question": "  What approach is recommended?  ", "call_id": "call-42"}',
+            data=json.dumps({
+                "question": "  What approach is recommended?  ",
+                "call_id": "call-42",
+                "conversation_id": str(conversation.pk),
+            }),
             content_type="application/json",
         )
 
@@ -206,12 +231,18 @@ class VoiceSessionTests(TestCase):
         question = Question.objects.get()
         self.assertEqual(question.user, self.admin)
         self.assertEqual(question.text, "What approach is recommended?")
+        self.assertEqual(question.voice_conversation, conversation)
+        self.assertEqual(question.voice_turn_index, 1)
         self.assertEqual(response.json()["sources"][0]["pdf_page"], 3)
         self.assertEqual(response.json()["spoken_answer"], "Use the dorsal approach.")
 
         duplicate = self.client.post(
             reverse("qa:voice_query"),
-            data='{"question": "What approach is recommended?", "call_id": "call-42"}',
+            data=json.dumps({
+                "question": "What approach is recommended?",
+                "call_id": "call-42",
+                "conversation_id": str(conversation.pk),
+            }),
             content_type="application/json",
         )
         self.assertEqual(duplicate.status_code, 200)
@@ -247,11 +278,49 @@ class VoiceSessionTests(TestCase):
     @patch("apps.qa.views.answer_question", side_effect=RuntimeError("provider failure"))
     def test_voice_query_failure_is_safe_and_question_is_retained(self, _answer_question):
         self.client.force_login(self.admin)
+        conversation = VoiceConversation.objects.create(user=self.admin)
         response = self.client.post(
             reverse("qa:voice_query"),
-            data='{"question":"What should I do?","call_id":"call-failure"}',
+            data=json.dumps({
+                "question": "What should I do?",
+                "call_id": "call-failure",
+                "conversation_id": str(conversation.pk),
+            }),
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 502)
         self.assertNotIn("provider failure", response.content.decode())
-        self.assertEqual(Question.objects.get().text, "What should I do?")
+        question = Question.objects.get()
+        self.assertEqual(question.text, "What should I do?")
+        self.assertEqual(question.voice_conversation, conversation)
+
+    def test_conversation_can_be_ended_idempotently(self):
+        self.client.force_login(self.admin)
+        conversation = VoiceConversation.objects.create(user=self.admin)
+        url = reverse("qa:voice_conversation_end", args=[conversation.pk])
+
+        first = self.client.post(url)
+        second = self.client.post(url)
+
+        conversation.refresh_from_db()
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(conversation.status, VoiceConversation.Status.ENDED)
+        self.assertIsNotNone(conversation.ended_at)
+
+    def test_question_rejects_a_conversation_owned_by_another_user(self):
+        self.client.force_login(self.admin)
+        conversation = VoiceConversation.objects.create(user=self.user)
+
+        response = self.client.post(
+            reverse("qa:voice_query"),
+            data=json.dumps({
+                "question": "What should I do?",
+                "call_id": "call-other-user",
+                "conversation_id": str(conversation.pk),
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Question.objects.exists())

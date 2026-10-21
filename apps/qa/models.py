@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.db import models
+import uuid
 
 from .pdf_validation import validate_journal_pdf
 from .storage import PrivateMediaStorage
@@ -47,6 +48,57 @@ class RagChunk(models.Model):
         db_table = "rag_chunks"
 
 
+class AIDisclaimerAcceptance(models.Model):
+    class Source(models.TextChoices):
+        TEXT = "text", "Text assistant"
+        VOICE = "voice", "Voice assistant"
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="ai_disclaimer_acceptances",
+    )
+    disclaimer_version = models.CharField(max_length=40)
+    content_hash = models.CharField(max_length=64)
+    source = models.CharField(max_length=12, choices=Source.choices)
+    accepted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-accepted_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "disclaimer_version"],
+                name="unique_user_disclaimer_version",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.user} accepted AI disclaimer {self.disclaimer_version}"
+
+
+class VoiceConversation(models.Model):
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        ENDED = "ended", "Ended"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="voice_conversations",
+    )
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.ACTIVE)
+    started_at = models.DateTimeField(auto_now_add=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-started_at"]
+
+    def __str__(self):
+        return f"Voice conversation {self.pk} ({self.user})"
+
+
 class Question(models.Model):
     class Status(models.TextChoices):
         PROCESSING = "processing", "Processing"
@@ -54,6 +106,14 @@ class Question(models.Model):
         FAILED = "failed", "Failed"
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="questions")
+    voice_conversation = models.ForeignKey(
+        VoiceConversation,
+        on_delete=models.CASCADE,
+        related_name="questions",
+        null=True,
+        blank=True,
+    )
+    voice_turn_index = models.PositiveIntegerField(null=True, blank=True)
     text = models.TextField()
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PROCESSING)
     error_message = models.TextField(blank=True)
@@ -62,6 +122,12 @@ class Question(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["voice_conversation", "voice_turn_index"],
+                name="unique_voice_conversation_turn",
+            )
+        ]
 
 
 class Answer(models.Model):
