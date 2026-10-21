@@ -35,6 +35,8 @@
   let isPaused = false;
   let pendingControlCommand = null;
   let connectionAttempt = 0;
+  let activeConversationId = null;
+  let activeConversationEndUrl = null;
   const transcriptNodes = new Map();
   const processedToolCalls = new Set();
   const queryTimeoutMs = Number(root.dataset.queryTimeoutMs) || 120000;
@@ -247,7 +249,11 @@
           "Content-Type": "application/json",
           Accept: "application/json",
         },
-        body: JSON.stringify({ question: args.question, call_id: event.call_id }),
+        body: JSON.stringify({
+          question: args.question,
+          call_id: event.call_id,
+          conversation_id: activeConversationId,
+        }),
         signal: controller.signal,
       });
       output = await response.json().catch(() => ({}));
@@ -386,9 +392,23 @@
     }
   }
 
+  function endSavedConversation() {
+    if (!activeConversationEndUrl) return;
+    const endUrl = activeConversationEndUrl;
+    activeConversationId = null;
+    activeConversationEndUrl = null;
+    fetch(endUrl, {
+      method: "POST",
+      credentials: "same-origin",
+      keepalive: true,
+      headers: { "X-CSRFToken": ui.csrf.value, Accept: "application/json" },
+    }).catch(() => { /* The page may already be closing. */ });
+  }
+
   function cleanup({ preserveStatus = false } = {}) {
     connectionAttempt += 1;
     cancelActiveTool();
+    endSavedConversation();
     if (sessionTimer) window.clearTimeout(sessionTimer);
     if (disconnectTimer) window.clearTimeout(disconnectTimer);
     sessionTimer = null;
@@ -450,6 +470,8 @@
       setState("connecting", "Starting secure session", "Connecting to the realtime voice service…");
       const session = await requestClientSecret();
       requireCurrentAttempt();
+      activeConversationId = session.conversation_id;
+      activeConversationEndUrl = session.conversation_end_url;
 
       peerConnection = new RTCPeerConnection();
       const connection = peerConnection;

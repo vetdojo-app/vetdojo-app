@@ -1,0 +1,25 @@
+{% extends 'base.html' %}{% load static %}
+{% block title %}Voice conversation — VetDojo{% endblock %}
+{% block head %}<link rel="stylesheet" href="{% static 'css/conversation-history.css' %}?v=20261019-1">{% endblock %}
+{% block content %}
+<section class="app-shell conversation-detail-shell">
+  <a class="back-link" href="{% url 'qa:history' %}">← Back to conversation history</a>
+  <header class="conversation-detail-heading"><div><span class="eyebrow"><span></span> Saved voice session</span><h1>{% if conversation.ordered_questions %}{{ conversation.ordered_questions.0.text|truncatechars:100 }}{% else %}Voice conversation{% endif %}</h1><p>{{ conversation.started_at|date:"j F Y, H:i" }} · {{ conversation.ordered_questions|length }} question{{ conversation.ordered_questions|length|pluralize }}</p></div><span class="status-pill {{ conversation.status }}">{{ conversation.get_status_display }}</span></header>
+
+  <div class="saved-conversation">
+    {% for question in conversation.ordered_questions %}
+    <article class="saved-turn">
+      <div class="saved-turn-number">{{ question.voice_turn_index }}</div>
+      <div class="saved-turn-content">
+        <div class="saved-message saved-message-user"><span>You asked</span><p>{{ question.text }}</p></div>
+        {% for answer in question.answers.all %}
+        <div class="saved-message saved-message-assistant"><span>VetDojo answered</span><p>{{ answer.structured_content.summary|default:answer.text }}</p>
+          <div class="saved-answer-meta"><span>{{ answer.get_source_type_display }}</span><a href="{% url 'qa:detail' question.pk %}">View full answer{% if answer.sources.all %} and references{% endif %} →</a></div>
+        </div>
+        {% empty %}<div class="saved-message saved-message-error"><span>Answer unavailable</span><p>This question did not receive a completed answer.</p></div>{% endfor %}
+      </div>
+    </article>
+    {% empty %}<div class="history-empty"><h3>No questions were saved</h3><p>This voice session ended before a question was completed.</p></div>{% endfor %}
+  </div>
+</section>
+{% endblock %}

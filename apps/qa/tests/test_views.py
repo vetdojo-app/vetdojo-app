@@ -1,18 +1,38 @@
 from unittest.mock import patch
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from apps.accounts.models import User
-from apps.qa.models import Answer, AnswerSource, Question
+from apps.qa.disclaimer import DISCLAIMER_CONTENT_HASH, DISCLAIMER_VERSION
+from apps.qa.models import AIDisclaimerAcceptance, Answer, AnswerSource, Question, VoiceConversation
 
 class QuestionViewsTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="vet", email="vet@example.com", password="safe-test-password")
+        AIDisclaimerAcceptance.objects.create(
+            user=self.user,
+            disclaimer_version=DISCLAIMER_VERSION,
+            content_hash=DISCLAIMER_CONTENT_HASH,
+            source=AIDisclaimerAcceptance.Source.TEXT,
+        )
         self.client.force_login(self.user)
 
     def test_dashboard_is_private(self):
         self.client.logout()
         response = self.client.get(reverse("qa:dashboard"))
         self.assertEqual(response.status_code, 302)
+
+    @override_settings(VOICE_FEATURE_ENABLED=True, VOICE_TEST_USERS={"vet@example.com"})
+    def test_voice_switch_is_shown_to_authorized_user(self):
+        response = self.client.get(reverse("qa:dashboard"))
+
+        self.assertContains(response, reverse("qa:voice_dashboard"))
+        self.assertContains(response, "Assistant input mode")
+
+    @override_settings(VOICE_FEATURE_ENABLED=True, VOICE_TEST_USERS=set())
+    def test_voice_switch_is_hidden_from_unauthorized_user(self):
+        response = self.client.get(reverse("qa:dashboard"))
+
+        self.assertNotContains(response, reverse("qa:voice_dashboard"))
 
     @patch("apps.qa.views.answer_question")
     def test_valid_question_is_created(self, mocked_answer):
@@ -25,6 +45,88 @@ class QuestionViewsTests(TestCase):
         other = User.objects.create_user(username="other", email="other@example.com", password="safe-test-password")
         question = Question.objects.create(user=other, text="Private question")
         self.assertEqual(self.client.get(reverse("qa:detail", args=[question.pk])).status_code, 404)
+
+    def test_history_separates_text_questions_from_grouped_voice_conversations(self):
+        text_question = Question.objects.create(user=self.user, text="Typed TPLO question")
+        conversation = VoiceConversation.objects.create(
+            user=self.user,
+            status=VoiceConversation.Status.ENDED,
+        )
+        first = Question.objects.create(
+            user=self.user,
+            text="First voice question",
+            voice_conversation=conversation,
+            voice_turn_index=1,
+        )
+        Question.objects.create(
+            user=self.user,
+            text="Second voice question",
+            voice_conversation=conversation,
+            voice_turn_index=2,
+        )
+
+        response = self.client.get(reverse("qa:history"))
+
+        self.assertContains(response, "Voice conversations")
+        self.assertContains(response, "2 questions")
+        self.assertContains(response, "First voice question")
+        self.assertContains(response, "Typed TPLO question")
+        self.assertContains(
+            response,
+            reverse("qa:voice_conversation_detail", args=[conversation.pk]),
+        )
+        self.assertNotContains(response, reverse("qa:detail", args=[first.pk]))
+        self.assertEqual(list(response.context["questions"]), [text_question])
+
+    def test_voice_conversation_detail_orders_turns_and_answers(self):
+        conversation = VoiceConversation.objects.create(user=self.user)
+        second = Question.objects.create(
+            user=self.user,
+            text="Second saved turn",
+            voice_conversation=conversation,
+            voice_turn_index=2,
+        )
+        first = Question.objects.create(
+            user=self.user,
+            text="First saved turn",
+            voice_conversation=conversation,
+            voice_turn_index=1,
+        )
+        Answer.objects.create(
+            question=first,
+            text="First answer",
+            structured_content={"summary": "First answer summary"},
+            source_type=Answer.SourceType.CLIENT,
+        )
+        Answer.objects.create(
+            question=second,
+            text="Second answer",
+            source_type=Answer.SourceType.AI_AUTO,
+        )
+
+        response = self.client.get(
+            reverse("qa:voice_conversation_detail", args=[conversation.pk])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "First answer summary")
+        self.assertContains(response, "Second answer")
+        content = response.content.decode()
+        self.assertLess(content.index("First saved turn"), content.index("Second saved turn"))
+
+    def test_user_cannot_read_another_users_voice_conversation(self):
+        other = User.objects.create_user(
+            username="voice-other",
+            email="voice-other@example.com",
+            password="safe-test-password",
+        )
+        conversation = VoiceConversation.objects.create(user=other)
+
+        response = self.client.get(
+            reverse("qa:voice_conversation_detail", args=[conversation.pk])
+        )
+
+        self.assertEqual(response.status_code, 404)
 
     def test_ai_alternative_requires_library_answer(self):
         question = Question.objects.create(user=self.user, text="A clinical question", status=Question.Status.COMPLETE)

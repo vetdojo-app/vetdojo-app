@@ -1,22 +1,22 @@
 {% extends 'base.html' %}
 {% load static %}
 {% block title %}Voice testing — VetDojo{% endblock %}
-{% block head %}<link rel="stylesheet" href="{% static 'css/voice.css' %}?v=20261015-2">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{% static 'css/voice.css' %}?v=20261019-1">{% endblock %}
 {% block content %}
 <section class="voice-shell" data-voice-app data-session-url="{% url 'qa:voice_session' %}" data-query-url="{% url 'qa:voice_query' %}" data-query-timeout-ms="{{ voice_query_timeout_ms }}">
-  <header class="voice-heading">
+  <header class="voice-heading voice-heading-compact">
     <div>
-      <span class="eyebrow"><span></span> Voice proof of concept</span>
+      <span class="eyebrow"><span></span> Voice surgical assistant</span>
       <h1>Talk with VetDojo</h1>
-      <p>Ask questions aloud and receive spoken answers grounded in VetDojo's knowledge library.</p>
+      <p>Explore small animal surgery through a natural, hands-free conversation.</p>
     </div>
-    <a class="history-link" href="{% url 'qa:dashboard' %}">Return to text search <span>→</span></a>
+    <div class="assistant-heading-actions"><nav class="assistant-mode-switch" aria-label="Assistant input mode"><a href="{% url 'qa:dashboard' %}"><span aria-hidden="true">⌨</span> Text</a><a class="is-active" href="{% url 'qa:voice_dashboard' %}" aria-current="page"><span aria-hidden="true">●</span> Voice</a></nav><a class="history-link" href="{% url 'qa:history' %}">View history <span>→</span></a></div>
   </header>
 
-  <div class="voice-notice" role="note">
-    <strong>Voice testing mode</strong>
-    <p>Questions and answers are saved to your history. References are shown on screen and are not read aloud.</p>
-  </div>
+  <section class="voice-overview">
+    <div class="voice-overview-copy"><span class="voice-overview-icon" aria-hidden="true"><i></i><i></i><i></i></span><div><span class="assistant-kicker">Conversational learning</span><h2>Meet the VetDojo Voice Assistant</h2><p>Ask questions aloud and receive spoken, AI-generated responses informed by Dr Charles Kuntz’s surgical teaching, YouTube transcripts and selected educational documents. References remain visible on screen while you talk.</p></div></div>
+    <aside class="voice-safety" role="note"><span class="safety-label">Important</span><strong>AI-generated educational information — not a personal consultation.</strong><span>Voice transcriptions and responses may contain errors. Verify information before clinical use and do not share identifying or confidential information.</span></aside>
+  </section>
 
   <div class="voice-layout">
     <section class="voice-console" aria-labelledby="voice-status-title">
@@ -64,4 +64,4 @@
   </div>
 </section>
 {% endblock %}
-{% block scripts %}<script src="{% static 'js/voice.js' %}?v=20261015-2" defer></script>{% endblock %}
+{% block scripts %}<script src="{% static 'js/voice.js' %}?v=20261019-1" defer></script>{% endblock %}
